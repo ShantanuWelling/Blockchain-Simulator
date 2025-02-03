@@ -16,7 +16,7 @@ class EventType(Enum):
 random.seed(42)
 
 class Transaction:
-    def __init__(self, tx_id, sender, receiver, amount):
+    def __init__(self, tx_id, sender: int, receiver: int, amount: int):
         self.tx_id = tx_id
         self.sender = sender
         self.receiver = receiver
@@ -26,7 +26,7 @@ class Transaction:
         return f"{self.tx_id}: {self.sender} pays {self.receiver} {self.amount} coins"
 
 class Event:
-    def __init__(self, timestamp, event_type, data):
+    def __init__(self, timestamp, event_type: EventType, data: Transaction):
         self.timestamp = timestamp
         self.event_type = event_type
         self.data = data
@@ -36,30 +36,30 @@ class Event:
 
 class EventQueue:
     def __init__(self):
-        self.queue = []
+        self.queue: list[Event] = []
     
-    def add_event(self, event):
+    def add_event(self, event: Event):
         heapq.heappush(self.queue, event)
     
-    def pop_event(self):
-        return heapq.heappop(self.queue) if self.queue else None
+    def pop_event(self) -> Event:
+        return heapq.heappop(self.queue)
 
 class Peer:
-    def __init__(self, peer_id, balance, is_slow, is_low_cpu, interarrival_time):
+    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float):
         self.peer_id = peer_id
         self.balance = balance
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
         self.blockchain = None
-        self.mem_pool = []
+        self.mem_pool: list[Transaction] = []
         self.interarrival_time = interarrival_time
-        self.neighbours = []
+        self.neighbours: list[Peer] = []
 
-    def generate_transaction(self, network, timestamp):
+    def generate_transaction(self, network: "P2PNetwork", timestamp):
 
         delay = random.expovariate(1.0 / self.interarrival_time)
-        receiver = random.choice(self.network.peers) # change this
-        amount = random.randint(1, self.balance)
+        receiver = random.choice([peer for peer in network.peers if peer.peer_id != self.peer_id])
+        amount = random.randint(1, self.balance) # Update where? global amount map SW
         tx_id = uuid.uuid4()
         transaction = Transaction(tx_id, self.peer_id, receiver.peer_id, amount)
         event = Event(timestamp + delay, EventType.GENERATE_TRANSACTION, transaction)
@@ -74,8 +74,8 @@ class Peer:
         network.event_queue.add_event(event)
 
 class P2PNetwork:
-    def __init__(self, num_peers, frac_slow, frac_low_cpu, interarrival_time): ## z0 is frac_slow, z1 is frac_low_cpu
-        self.peers = []
+    def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float): ## z0 is frac_slow, z1 is frac_low_cpu
+        self.peers: list[Peer] = []
         self.num_peers = num_peers
         self.frac_slow = frac_slow
         self.frac_low_cpu = frac_low_cpu
@@ -91,7 +91,8 @@ class P2PNetwork:
         self.event_queue = EventQueue()
         for i in range(self.num_peers):
             timestamp = random.expovariate(1.0 / self.interarrival_time)
-            event = Event(timestamp, EventType.GENERATE_TRANSACTION, i)
+            event = Event(timestamp, EventType.GENERATE_TRANSACTION, i) # what is i here? SW
+            # store prev timestamp to generate txn
             self.event_queue.add_event(event)
 
     def create_peers(self):
@@ -153,16 +154,20 @@ class P2PNetwork:
                 elif event.event_type == EventType.RECEIVE_TRANSACTION:
                     self.process_receive_transaction(event)
     
-    def process_generate_transaction(self, event):
+    def process_generate_transaction(self, event: Event):
         id = event.data.sender
         timestamp = event.timestamp
         peer = self.peers[id]
         peer.generate_transaction(self, timestamp)
 
-    def process_receive_transaction(self, event):
+    def process_receive_transaction(self, event: Event):
         transaction = event.data
         receiver = self.peers[transaction.receiver]
+        # validate transaction balance
+        if transaction in receiver.mem_pool: # or in blockchain
+            return
         receiver.mem_pool.append(transaction)
+        # forward
 
 
 
