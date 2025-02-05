@@ -1,48 +1,13 @@
 import random
-import sys
 import argparse
-import heapq
-from enum import Enum, auto
 import uuid
+from blockchain_lib import *
 
 ## global constants
 TX_SIZE = 1/1024  # 1 KB (in MB)
 
-
-class EventType(Enum):
-    GENERATE_TRANSACTION = auto()
-    RECEIVE_TRANSACTION = auto()
-
 random.seed(42)
 
-class Transaction:
-    def __init__(self, tx_id, sender: int, receiver: int, amount: int):
-        self.tx_id = tx_id
-        self.sender = sender
-        self.receiver = receiver
-        self.amount = amount
-    
-    def __str__(self):
-        return f"{self.tx_id}: {self.sender} pays {self.receiver} {self.amount} coins"
-
-class Event:
-    def __init__(self, timestamp, event_type: EventType, data: Transaction):
-        self.timestamp = timestamp
-        self.event_type = event_type
-        self.data = data
-    
-    def __lt__(self, other):
-        return self.timestamp < other.timestamp
-
-class EventQueue:
-    def __init__(self):
-        self.queue: list[Event] = []
-    
-    def add_event(self, event: Event):
-        heapq.heappush(self.queue, event)
-    
-    def pop_event(self) -> Event:
-        return heapq.heappop(self.queue)
 
 class Peer:
     def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float):
@@ -51,7 +16,7 @@ class Peer:
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
         self.blockchain = None
-        self.mem_pool: list[Transaction] = []
+        self.mem_pool: set[Transaction] = set()
         self.interarrival_time = interarrival_time
         self.neighbours: list[Peer] = []
 
@@ -62,16 +27,17 @@ class Peer:
         amount = random.randint(1, self.balance) # Update where? global amount map SW
         tx_id = uuid.uuid4()
         transaction = Transaction(tx_id, self.peer_id, receiver.peer_id, amount)
-        event = Event(timestamp + delay, EventType.GENERATE_TRANSACTION, transaction)
+        event = Event(timestamp + delay, EventType.GENERATE_TRANSACTION, transaction, self.peer_id, None)
         network.event_queue.add_event(event)
 
-        latencies = network.latencies[(self.peer_id, receiver.peer_id)]
-        rho = latencies["rho"]
-        c = latencies["c"]
-        d = random.expovariate((12/1024) / c)  # Processing delay at sender
-        delay = rho + TX_SIZE / c + d
-        event = Event(timestamp + delay, EventType.RECEIVE_TRANSACTION, transaction)
-        network.event_queue.add_event(event)
+        for neighbour in self.neighbours:
+            latencies = network.latencies[(self.peer_id, neighbour.peer_id)]
+            rho = latencies["rho"]
+            c = latencies["c"]
+            d = random.expovariate((12/1024) / c)
+            receiver_delay = rho + TX_SIZE / c + d + delay
+            event = Event(timestamp + receiver_delay, EventType.RECEIVE_TRANSACTION, transaction, self.peer_id, neighbour.peer_id)
+            network.event_queue.add_event(event)
 
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float): ## z0 is frac_slow, z1 is frac_low_cpu
@@ -90,10 +56,24 @@ class P2PNetwork:
     def initialize_event_queue(self):
         self.event_queue = EventQueue()
         for i in range(self.num_peers):
+            sender = self.peers[i]
             timestamp = random.expovariate(1.0 / self.interarrival_time)
-            event = Event(timestamp, EventType.GENERATE_TRANSACTION, i) # what is i here? SW
-            # store prev timestamp to generate txn
+            
+            receiver = random.choice([peer for peer in self.peers if peer.peer_id != sender.peer_id])
+            amount = random.randint(1, sender.balance) # Update where? global amount map SW
+            tx_id = uuid.uuid4()
+            transaction = Transaction(tx_id, sender.peer_id, receiver.peer_id, amount)
+            event = Event(timestamp, EventType.GENERATE_TRANSACTION, transaction, sender.peer_id, None)
             self.event_queue.add_event(event)
+
+            for neighbour in self.peers[i].neighbours:
+                latencies = network.latencies[(sender.peer_id, neighbour.peer_id)]
+                rho = latencies["rho"]
+                c = latencies["c"]
+                d = random.expovariate((12/1024) / c)
+                delay = rho + TX_SIZE / c + d
+                event = Event(timestamp + delay, EventType.RECEIVE_TRANSACTION, transaction, sender.peer_id, neighbour.peer_id)
+                network.event_queue.add_event(event)
 
     def create_peers(self):
         for i in range(self.num_peers):
@@ -155,19 +135,26 @@ class P2PNetwork:
                     self.process_receive_transaction(event)
     
     def process_generate_transaction(self, event: Event):
-        id = event.data.sender
+        id = event.sender
         timestamp = event.timestamp
         peer = self.peers[id]
         peer.generate_transaction(self, timestamp)
 
     def process_receive_transaction(self, event: Event):
         transaction = event.data
-        receiver = self.peers[transaction.receiver]
-        # validate transaction balance
-        if transaction in receiver.mem_pool: # or in blockchain
+        receiver = self.peers[event.receiver]
+        if transaction in receiver.mem_pool: # or in blockchain SW
             return
         receiver.mem_pool.append(transaction)
-        # forward
+        timestamp = event.timestamp
+        for neighbour in receiver.neighbours:
+            latencies = self.latencies[(receiver.peer_id, neighbour.peer_id)]
+            rho = latencies["rho"]
+            c = latencies["c"]
+            d = random.expovariate((12/1024) / c)
+            delay = rho + TX_SIZE / c + d
+            event = Event(timestamp + delay, EventType.RECEIVE_TRANSACTION, transaction, receiver.peer_id, neighbour.peer_id)
+            
 
 
 
