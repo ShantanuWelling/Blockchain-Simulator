@@ -82,6 +82,9 @@ class Peer:
         if block.block_id in self.blocks_seen:
             return False
         self.blockchain_tree.add(block)
+        longest_chain_leaf = self.blockchain_tree.longest_chain_leaf.id
+        if longest_chain_leaf == self.block_being_mined.parent_block_id:
+            return 
         return True
 
 class P2PNetwork:
@@ -213,7 +216,7 @@ class P2PNetwork:
             end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
             self.event_queue.add_event(end_mining_event)
             return
-        peer.mine(block)
+        peer.mine(block) 
         self.forward_packet(peer, block, event.timestamp, id)
         end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
         self.event_queue.add_event(end_mining_event)
