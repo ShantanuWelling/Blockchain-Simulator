@@ -215,9 +215,13 @@ class P2PNetwork:
                     self.process_end_mining(event)
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
-                    input()
-                    self.print_balances()
-                    self.print_blockchain_tree_height()
+                    # input()
+                    # self.print_balances()
+                    # self.print_blockchain_tree_height()
+                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 10:
+                        self.print_balances()
+                        self.print_blockchain_tree_height()
+                        input()
                     
     
     def process_generate_transaction(self, event: Event):
@@ -268,6 +272,7 @@ class P2PNetwork:
             # sort balance map by keys
             sorted_balance_map = dict(sorted(balance_map.items()))
             print(f"Peer {peer.peer_id} balance map: {sorted_balance_map}")
+            print(f"Sum balance map {sum(sorted_balance_map.values())}")
     
     def print_blockchain_tree_height(self):
         for peer in self.peers:
