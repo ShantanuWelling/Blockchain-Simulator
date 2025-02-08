@@ -55,7 +55,6 @@ class Peer:
 
 
     def choose_transactions(self) -> list[Transaction]:
-        ## also updates balances of all peers
         transactions: list[Transaction] = []
         balance_map = self.blockchain_tree.longest_chain_leaf.balance_map.copy()
         for tx in sorted(self.mem_pool):
@@ -64,7 +63,9 @@ class Peer:
             if balance_map[tx.sender] >= tx.amount:
                 transactions.append(tx)
                 balance_map[tx.sender] -= tx.amount
-                balance_map[tx.receiver] += tx.amount  
+                balance_map[tx.receiver] += tx.amount
+        self.balance = balance_map[self.peer_id]
+        ## acc to longest chain + block being mined
         return transactions
 
     def receive_transaction(self, transaction: Transaction) -> bool:
@@ -74,18 +75,20 @@ class Peer:
         self.transactions_seen.add(transaction.tx_id)
         return True
     
-    def receive_block(self, block: Block) -> bool:
+    def receive_block(self, block: Block) -> int:
         ## validate transactions
         ## append in own tree
         ## check if already mining and if need to change the block being mined on
-
+        ## -1: already seen block, no forwarding
+        # 1: need to re-start mining since longest chain switches, 0: keep mining current block, forward in both
         if block.block_id in self.blocks_seen:
-            return False
+            return -1
         self.blockchain_tree.add(block)
-        longest_chain_leaf = self.blockchain_tree.longest_chain_leaf.id
-        if longest_chain_leaf == self.block_being_mined.parent_block_id:
-            return 
-        return True
+        longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
+        if longest_chain_leaf.id == self.block_being_mined.parent_block_id:
+            return 0
+        self.balance = longest_chain_leaf.balance_map[self.peer_id]
+        return 1
 
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float): ## z0 is frac_slow, z1 is frac_low_cpu
@@ -224,14 +227,15 @@ class P2PNetwork:
     def process_receive_block(self, event: Event):
         receiver = self.peers[event.receiver]
         block = event.data
-        
-        unseen_valid_block = receiver.receive_block(block)
-        if unseen_valid_block:
+        hashing_power = self.low_hashing_power if receiver.is_low_cpu else self.high_hashing_power
+        return_code = receiver.receive_block(block)
+        if return_code != -1:
             self.forward_packet(receiver, block, event.timestamp, event.sender)
-        
+        if return_code == 1:
+            receiver.start_mining(event.timestamp, hashing_power, self.I)
 
         
-
+        
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='P2P Network Simulator')
     parser.add_argument('num_peers', type=int, help='Number of peers in the network', required=True)

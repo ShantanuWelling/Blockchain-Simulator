@@ -3,3 +3,5 @@ balance update
 tx forwarding : if tx received even through block for first time then forward it to other peers
 
 Node can fake transaction sender and mine that transaction
+
+Update balances properly in add

@@ -118,7 +118,9 @@ class BlockchainTree:
                 new_node = BlockChainNode(block, parent_node)
                 self.nodes[block.block_id] = new_node
                 parent_node.children.append(new_node)
-                if new_node.height > self.height:
+                longest_chain_timestamp = self.longest_chain_leaf.block.create_timestamp
+                if new_node.height > self.height or new_node.height == self.height and longest_chain_timestamp > block.create_timestamp:
+                    ## also switch chain if same length but the new block is chronologically earlier than old?
                     self.height = new_node.height
                     self.longest_chain_leaf = new_node
             self.buffer = [block for block in self.buffer if block.block_id not in self.nodes]

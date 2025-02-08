@@ -1,0 +1,5 @@
+1. Tree of block at every Peer:
+    1. Longest chain's leaf node.
+    2. Balances of all peers in the leaf nodes.
+2. Orphaned chain -> mempool txns & Balances
+3. Validate blocks
