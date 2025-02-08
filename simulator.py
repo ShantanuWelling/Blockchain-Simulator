@@ -2,7 +2,7 @@ import random
 import argparse
 import uuid
 from blockchain_lib import *
-from typing import Set, Union, Dict
+from typing import Set, Union, Dict, List
 
 ## global constants
 TX_SIZE = 1/1024  # 1 KB (in MB)
@@ -25,14 +25,21 @@ class Peer:
         self.blockchain_tree = BlockchainTree()
         self.block_being_mined = None
 
-    def generate_transaction(self, timestamp, peers: list["Peer"]) -> Event:
+    def generate_transaction(self, timestamp, peers: List["Peer"]) -> Event:
         delay = random.expovariate(1.0 / self.interarrival_time)
         receiver = random.choice([peer for peer in peers if peer.peer_id != self.peer_id])
-        amount = random.randint(1, self.balance) # Update where? global amount map SW
+        
+        if self.balance == 0:
+            amount = 0
+            receiver = self
+        else:    
+            amount = random.randint(1, self.balance)
         tx_id = uuid.uuid4()
         transaction = Transaction(tx_id, self.peer_id, receiver.peer_id, amount, timestamp + delay)
         event = Event(timestamp + delay, EventType.GENERATE_TRANSACTION, transaction, self.peer_id, None)
         self.transactions_seen.add(tx_id)
+        if transaction.amount != 0:
+            self.mem_pool.append(transaction)
         return event
 
     def start_mining(self, timestamp, hashing_power: float, interarrival_time: int) -> Event:
@@ -54,7 +61,7 @@ class Peer:
         self.mem_pool = [tx for tx in self.mem_pool if tx.tx_id not in block.transactions]
 
 
-    def choose_transactions(self) -> list[Transaction]:
+    def choose_transactions(self) -> List[Transaction]:
         transactions: list[Transaction] = []
         balance_map = self.blockchain_tree.longest_chain_leaf.balance_map.copy()
         for tx in sorted(self.mem_pool):
@@ -85,19 +92,19 @@ class Peer:
             return -1
         chain_tx_set = self.blockchain_tree.chain_transactions(self.blockchain_tree.longest_chain_leaf)
         chain_tx_set = chain_tx_set.union(self.block_being_mined.transactions)
-
+        # print("here")
         self.blockchain_tree.add(block)
         self.blocks_seen.add(block.block_id)
 
         longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
-        if longest_chain_leaf.id == self.block_being_mined.parent_block_id:
+        if longest_chain_leaf.block.block_id == self.block_being_mined.parent_block_id:
             return 0
         
         ## updates balance and mem_pool of the peer due to chain switch
         self.balance = longest_chain_leaf.balance_map[self.peer_id]
         new_chain_tx_set = self.blockchain_tree.chain_transactions(self.blockchain_tree.longest_chain_leaf)
-        delta = chain_tx_set.difference(new_chain_tx_set)
-        self.mem_pool = list(set(self.mem_pool).union(delta))
+        mempool_set = set(self.mem_pool).union(chain_tx_set).difference(new_chain_tx_set)
+        self.mem_pool = list(mempool_set)
 
         return 1 ## this will trigger a start_mining on the new longest chain
 
@@ -111,11 +118,12 @@ class P2PNetwork:
         self.low_hashing_power = 1 / (num_peers * (10 - 9 * frac_low_cpu))
         self.high_hashing_power = 10 / (num_peers * (10 - 9 * frac_low_cpu))
         self.interarrival_time = interarrival_time
-        self.initialize_event_queue()
-        self.create_peers()
-        self.connect_peers()
         self.latencies = {}
         self.continue_simulation = True
+        self.create_peers()
+        self.connect_peers()
+        self.initialize_latencies()
+        self.initialize_event_queue()
 
 
     def initialize_event_queue(self):
@@ -169,7 +177,7 @@ class P2PNetwork:
     
     def initialize_latencies(self):
         for peer in self.peers:
-            for neighbor in peer.connections:
+            for neighbor in peer.neighbours:
                 if (peer.peer_id, neighbor.peer_id) not in self.latencies:
                     rho = random.uniform(10, 500)  # Propagation delay in ms
                     link_speed = 100 if not (peer.is_slow or neighbor.is_slow) else 5  # 100 Mbps or 5 Mbps
@@ -183,6 +191,7 @@ class P2PNetwork:
         for neighbour in peer.neighbours:
             if neighbour.peer_id == sender_id:
                 continue
+            # print(self.latencies)
             latencies = self.latencies[(peer.peer_id, neighbour.peer_id)]
             rho = latencies["rho"]
             c = latencies["c"]
@@ -196,6 +205,7 @@ class P2PNetwork:
     def process_events(self):
         while self.continue_simulation:
             while self.event_queue.queue:
+                # input()
                 event = self.event_queue.pop_event()
                 if event.event_type == EventType.GENERATE_TRANSACTION:
                     self.process_generate_transaction(event)
@@ -205,14 +215,19 @@ class P2PNetwork:
                     self.process_end_mining(event)
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
+                    input()
+                    self.print_balances()
+                    self.print_blockchain_tree_height()
+                    
     
     def process_generate_transaction(self, event: Event):
         id = event.sender
         timestamp = event.timestamp
         peer = self.peers[id]
-        gen_tx_event = peer.generate_transaction(self, timestamp, self.peers)
+        gen_tx_event = peer.generate_transaction(timestamp, self.peers)
         self.event_queue.add_event(gen_tx_event) ## add to event queue to generate next transaction
-        self.forward_packet(peer, gen_tx_event.data, gen_tx_event.timestamp, id)
+        if event.data.amount != 0:
+            self.forward_packet(peer, gen_tx_event.data, gen_tx_event.timestamp, id)
 
     def process_receive_transaction(self, event: Event):
         receiver = self.peers[event.receiver]
@@ -226,7 +241,7 @@ class P2PNetwork:
         peer = self.peers[id]
         block = event.data
         hashing_power = self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
-        if block.id != peer.block_being_mined.id:
+        if block.block_id != peer.block_being_mined.block_id:
             end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
             self.event_queue.add_event(end_mining_event)
             return
@@ -240,18 +255,32 @@ class P2PNetwork:
         block = event.data
         hashing_power = self.low_hashing_power if receiver.is_low_cpu else self.high_hashing_power
         return_code = receiver.receive_block(block)
+        # print(return_code, )
         if return_code != -1:
             self.forward_packet(receiver, block, event.timestamp, event.sender)
         if return_code == 1:
             receiver.start_mining(event.timestamp, hashing_power, self.I)
+            
+    def print_balances(self):
+        for peer in self.peers:
+            # print(f"Peer {peer.peer_id} has balance {peer.balance}")
+            balance_map = peer.blockchain_tree.longest_chain_leaf.balance_map
+            # sort balance map by keys
+            sorted_balance_map = dict(sorted(balance_map.items()))
+            print(f"Peer {peer.peer_id} balance map: {sorted_balance_map}")
+    
+    def print_blockchain_tree_height(self):
+        for peer in self.peers:
+            print(f"Peer {peer.peer_id} has blockchain height {peer.blockchain_tree.longest_chain_leaf.height}")
         
+      
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='P2P Network Simulator')
-    parser.add_argument('num_peers', type=int, help='Number of peers in the network', required=True)
-    parser.add_argument('frac_slow', type=float, help='Fraction of slow peers', required=True)
-    parser.add_argument('frac_low_cpu', type=float, help='Fraction of low CPU peers', required=True)
-    parser.add_argument('interarrival_time', type=float, help='Mean interarrival time of transactions', required=True)
-    parser.add_argument('I', type=float, help='Block mining time', required=True)
+    parser.add_argument('-num_peers', type=int, help='Number of peers in the network', required=True)
+    parser.add_argument('-frac_slow', type=float, help='Fraction of slow peers', required=True)
+    parser.add_argument('-frac_low_cpu', type=float, help='Fraction of low CPU peers', required=True)
+    parser.add_argument('-interarrival_time', type=float, help='Mean interarrival time of transactions', required=True)
+    parser.add_argument('-I', type=float, help='Block mining time', required=True)
     args = parser.parse_args()
 
     num_peers = args.num_peers

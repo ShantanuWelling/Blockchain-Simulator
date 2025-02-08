@@ -1,6 +1,7 @@
 import heapq
 from enum import Enum, auto
-from typing import Union, Dict
+from typing import Union, Dict, List, Set
+from collections import defaultdict
 
 class EventType(Enum):
     GENERATE_TRANSACTION = auto()
@@ -10,14 +11,16 @@ class EventType(Enum):
     
 COINBASE_REWARD = 50  # 50 coins
 
-def validate(transactions: list["Transaction"], balances: Dict[int, int]) -> bool:
+def validate(transactions: List["Transaction"], balances: Dict[int, int]) -> bool:
         balance_map = balances.copy()
         for tx in sorted(transactions):
-            if tx.sender == None and tx.amount != 50:
-                return False
-            if balance_map[tx.sender] < tx.amount:
-                return False
-            balance_map[tx.sender] -= tx.amount
+            if tx.sender == None:
+                if tx.amount != 50:
+                    return False
+            else:        
+                if balance_map[tx.sender] < tx.amount:
+                    return False
+                balance_map[tx.sender] -= tx.amount
             balance_map[tx.receiver] += tx.amount
         return True
 
@@ -70,7 +73,7 @@ class EventQueue:
     
 
 class Block:
-    def __init__(self, block_id, transactions: list[Transaction], parent_block_id, timestamp):
+    def __init__(self, block_id, transactions: List[Transaction], parent_block_id, timestamp):
         self.block_id = block_id
         self.transactions = transactions
         self.create_timestamp = timestamp
@@ -91,18 +94,18 @@ class BlockChainNode:
                     self.balance_map[tx.sender] -= tx.amount
                 self.balance_map[tx.receiver] += tx.amount
         else:
-            self.balance_map = {tx.sender: 0 for tx in block.transactions} ## SW
+            self.balance_map = defaultdict(int) ## SW
 
 class BlockchainTree:
     def __init__(self):
-        self.genesis_block = Block(0, [], -1)
+        self.genesis_block = Block(0, [], -1, 0)
         self.root = BlockChainNode(self.genesis_block, None)
         self.buffer: list[Block] = [] # Buffer for blocks that are not yet part of the blockchain
         self.nodes: Dict[int, BlockChainNode] = {0: self.root}
         self.longest_chain_leaf = self.root
         self.height = 0
 
-    def chain_transactions(self, block: BlockChainNode) -> set["Transaction"]:
+    def chain_transactions(self, block: BlockChainNode) -> Set[Transaction]:
         tx_set = set()
         curr_node = block
         while curr_node:
@@ -116,10 +119,12 @@ class BlockchainTree:
 
         while len(self.buffer) != prev_buffer_len:
             prev_buffer_len = len(self.buffer)
-
+            # print("while", len(self.buffer))
             for block in self.buffer:
                 if block.parent_block_id not in self.nodes:
+                    # print("b1")
                     continue
+                # print("here1")
                 parent_node = self.nodes[block.parent_block_id]
 
                 ## TODO: need to remove blocks from the buffer that are children of an invalid block
@@ -127,21 +132,25 @@ class BlockchainTree:
                 ## Time check
                 if block.create_timestamp < parent_node.block.create_timestamp:
                     self.buffer.remove(block)
+                    # print("b2")
                     continue
                 ## Balance check
                 valid_block = validate(block.transactions, parent_node.balance_map)
                 if not valid_block:
                     self.buffer.remove(block)
+                    # print("b3")
                     continue
                 ## New transactions check
                 chain_transactions = self.chain_transactions(parent_node)
                 if chain_transactions.intersection(set(block.transactions)):
                     self.buffer.remove(block)
+                    # print("b4")
+                    
                     continue
 
                 ## Add tx_ids of block in own seen_txs if added on longest chain?
                 ## update of Peer's mem_pool done in mine, and in receive block
-
+                # print('update')
                 parent_node = self.nodes[block.parent_block_id]
                 new_node = BlockChainNode(block, parent_node)
                 self.nodes[block.block_id] = new_node
