@@ -10,6 +10,17 @@ class EventType(Enum):
     
 COINBASE_REWARD = 50  # 50 coins
 
+def validate(transactions: list["Transaction"], balances: Dict[int, int]) -> bool:
+        balance_map = balances.copy()
+        for tx in sorted(transactions):
+            if tx.sender == None and tx.amount != 50:
+                return False
+            if balance_map[tx.sender] < tx.amount:
+                return False
+            balance_map[tx.sender] -= tx.amount
+            balance_map[tx.receiver] += tx.amount
+        return True
+
 class Transaction:
     def __init__(self, tx_id, sender: int, receiver: int, amount: int, timestamp):
         self.tx_id = tx_id
@@ -91,39 +102,56 @@ class BlockchainTree:
         self.longest_chain_leaf = self.root
         self.height = 0
 
+    def chain_transactions(self, block: BlockChainNode) -> set["Transaction"]:
+        tx_set = set()
+        curr_node = block
+        while curr_node:
+            tx_set.union(set(curr_node.block.transactions))
+            curr_node = curr_node.parent
+        return tx_set
+    
     def add(self, block: Block) -> Block:
         self.buffer.append(block)
         prev_buffer_len = -1
+
         while len(self.buffer) != prev_buffer_len:
             prev_buffer_len = len(self.buffer)
+
             for block in self.buffer:
                 if block.parent_block_id not in self.nodes:
                     continue
-                ## validate block, if failed, remove from buffer, continue, else add to blockchain
-                ## check if coinbase transaction is valid
-                if block.transactions[0].amount != COINBASE_REWARD  # 50 coins
-                    remove_block_and_its_children(block)
+                parent_node = self.nodes[block.parent_block_id]
+
+                ## TODO: need to remove blocks from the buffer that are children of an invalid block
+
+                ## Time check
+                if block.create_timestamp < parent_node.block.create_timestamp:
+                    self.buffer.remove(block)
                     continue
-                ## check if tranactions in this block are not there in the chain in which it is being added
-                for tx in block.transactions:
+                ## Balance check
+                valid_block = validate(block.transactions, parent_node.balance_map)
+                if not valid_block:
+                    self.buffer.remove(block)
+                    continue
+                ## New transactions check
+                chain_transactions = self.chain_transactions(parent_node)
+                if chain_transactions.intersection(set(block.transactions)):
+                    self.buffer.remove(block)
+                    continue
 
-                    ## check if final balances dont go negative for any peer
-                    ## check if block timestamp is greater than parent block timestamp
-                
-
-                ## add tx_ids of block in own seen_txs if added on longest chain and remove those from our mempool
-
+                ## Add tx_ids of block in own seen_txs if added on longest chain?
+                ## update of Peer's mem_pool done in mine, and in receive block
 
                 parent_node = self.nodes[block.parent_block_id]
                 new_node = BlockChainNode(block, parent_node)
                 self.nodes[block.block_id] = new_node
                 parent_node.children.append(new_node)
+                self.buffer.remove(block)
                 longest_chain_timestamp = self.longest_chain_leaf.block.create_timestamp
                 if new_node.height > self.height or new_node.height == self.height and longest_chain_timestamp > block.create_timestamp:
-                    ## also switch chain if same length but the new block is chronologically earlier than old?
+                    ## Switch chain if same length but the new block is chronologically earlier than old?
                     self.height = new_node.height
                     self.longest_chain_leaf = new_node
-            self.buffer = [block for block in self.buffer if block.block_id not in self.nodes]
 
         
             

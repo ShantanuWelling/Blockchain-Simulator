@@ -20,7 +20,7 @@ class Peer:
         self.mem_pool: list[Transaction] = []
         self.interarrival_time = interarrival_time
         self.neighbours: list[Peer] = []
-        self.transactions_seen: Set[uuid.UUID] = set() ## add tx when generated, received by peer, or added to blockchain
+        self.transactions_seen: Set[uuid.UUID] = set() ## add tx when generated, received by peer, (or added to blockchain: why?? AD)
         self.blocks_seen: Set[uuid.UUID] = set() ## add block when received by peer or added to blockchain
         self.blockchain_tree = BlockchainTree()
         self.block_being_mined = None
@@ -83,12 +83,23 @@ class Peer:
         # 1: need to re-start mining since longest chain switches, 0: keep mining current block, forward in both
         if block.block_id in self.blocks_seen:
             return -1
+        chain_tx_set = self.blockchain_tree.chain_transactions(self.blockchain_tree.longest_chain_leaf)
+        chain_tx_set = chain_tx_set.union(self.block_being_mined.transactions)
+
         self.blockchain_tree.add(block)
+        self.blocks_seen.add(block.block_id)
+
         longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
         if longest_chain_leaf.id == self.block_being_mined.parent_block_id:
             return 0
+        
+        ## updates balance and mem_pool of the peer due to chain switch
         self.balance = longest_chain_leaf.balance_map[self.peer_id]
-        return 1
+        new_chain_tx_set = self.blockchain_tree.chain_transactions(self.blockchain_tree.longest_chain_leaf)
+        delta = chain_tx_set.difference(new_chain_tx_set)
+        self.mem_pool = list(set(self.mem_pool).union(delta))
+
+        return 1 ## this will trigger a start_mining on the new longest chain
 
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float): ## z0 is frac_slow, z1 is frac_low_cpu
@@ -233,8 +244,6 @@ class P2PNetwork:
             self.forward_packet(receiver, block, event.timestamp, event.sender)
         if return_code == 1:
             receiver.start_mining(event.timestamp, hashing_power, self.I)
-
-        
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='P2P Network Simulator')
