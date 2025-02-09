@@ -156,12 +156,13 @@ class Peer:
             pos[node] = (x, max_height - y + min_height)
 
         # Draw the graph with square-shaped nodes
-        plt.figure(figsize=(6, 14))
+        plt.figure(figsize=(10, 25))
         nx.draw(G, pos, with_labels=True, labels=labels, node_size=3500, node_color=node_colors, font_size=5, font_weight="bold", width=2, edge_color="gray", node_shape='s')
         
         plt.title(f"Blockchain Tree of Peer {self.peer_id}")
         # plt.show()
         plt.savefig(f"{output_dir}/tree_peer_{self.peer_id}.png", dpi=300, bbox_inches="tight", pad_inches=0)
+        plt.close()
 
     def write_to_file(self, file_name: str):
         def add_node_edges_to_file(node: BlockChainNode, file, indent=""):
