@@ -8,7 +8,7 @@ import networkx as nx
 from matplotlib import pyplot as plt
 
 ## global constants
-TX_SIZE = 1/1024  # 1 KB (in MB)
+TX_SIZE = 1/1000  # 1 KB (in MB)
 COINBASE_REWARD = 50  # 50 coins
 
 random.seed(42)
@@ -17,36 +17,42 @@ random.seed(42)
 class Peer:
     def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float):
         self.peer_id = peer_id
-        self.balance = balance
+        self.balance = balance ## maintained according to the longest chain + block being mined
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
         self.mem_pool: List[Transaction] = []
         self.interarrival_time = interarrival_time
         self.neighbours: List[Peer] = []
-        self.transactions_seen: Set[uuid.UUID] = set() ## add tx when generated, received by peer, (or added to blockchain: why?? AD)
-        self.blocks_seen: Set[uuid.UUID] = set() ## add block when received by peer or added to blockchain
+        ## for loopless forwarding
+        self.transactions_seen: Set[uuid.UUID] = set()
+        self.blocks_seen: Set[uuid.UUID] = set()
         self.blockchain_tree = BlockchainTree()
+        ## block being mined currently
         self.block_being_mined = None
         self.blocks_mined: int = 0
 
     def generate_transaction(self, timestamp, peers: List["Peer"]) -> Event:
+        ## Generates a transaction and returns an event to process the same after an exponential delay
         delay = random.expovariate(1.0 / self.interarrival_time)
         receiver = random.choice([peer for peer in peers if peer.peer_id != self.peer_id])
         
         if self.balance == 0:
+            ## dummy 0 amount transaction if no balance
             amount = 0
             receiver = self
         else:    
             amount = random.randint(1, self.balance)
-        tx_id = uuid.uuid4()
+        tx_id = uuid.uuid4() ## unique id per transaction
         transaction = Transaction(tx_id, self.peer_id, receiver.peer_id, amount, timestamp + delay)
         event = Event(timestamp + delay, EventType.GENERATE_TRANSACTION, transaction, self.peer_id, None)
         self.transactions_seen.add(tx_id)
         if transaction.amount != 0:
+            ## add non-dummy txs to the mempool
             self.mem_pool.append(transaction)
         return event
 
     def start_mining(self, timestamp, hashing_power: float, interarrival_time: int) -> Event:
+        ## Collect transactions from the mempool, and return an event to end mining after appropriate delay
         parent_block_id = self.blockchain_tree.longest_chain_leaf.block.block_id
         coinbase_transaction = Transaction(uuid.uuid4(), None, self.peer_id, COINBASE_REWARD, timestamp)
         block_transactions = [coinbase_transaction] + self.choose_transactions()
@@ -58,25 +64,27 @@ class Peer:
         return event
     
     def mine(self, block: Block, timestamp):
-        self.blockchain_tree.add(block, timestamp) ## balance map updated
+        self.blockchain_tree.add(block, timestamp)
         self.block_being_mined = None
         self.blocks_seen.add(block.block_id)
-        ## remove txs from mempool
+        ## remove block txs from mempool
         self.mem_pool = list(set(self.mem_pool).difference(set(block.transactions)))
         self.blocks_mined = self.blocks_mined + 1
 
     def choose_transactions(self) -> List[Transaction]:
         transactions: List[Transaction] = []
         balance_map = self.blockchain_tree.longest_chain_leaf.balance_map.copy()
+        ## greedily pick as many transactions as possible from the mempool
         for tx in sorted(self.mem_pool):
             if len(transactions) == 999:
                 break
             if balance_map[tx.sender] >= tx.amount:
+                ## only pick consistent transactions
                 transactions.append(tx)
                 balance_map[tx.sender] -= tx.amount
                 balance_map[tx.receiver] += tx.amount
+        ## update balance of the peer 
         self.balance = balance_map[self.peer_id]
-        ## acc to longest chain + block being mined
         return transactions
 
     def receive_transaction(self, transaction: Transaction) -> bool:
@@ -87,40 +95,43 @@ class Peer:
         return True
     
     def receive_block(self, block: Block, timestamp) -> int:
-        ## validate transactions
-        ## append in own tree
-        ## check if already mining and if need to change the block being mined on
         ## -1: already seen block, no forwarding
-        # 1: need to re-start mining since longest chain switches, 0: keep mining current block, forward in both
+        ## 1: longest chain switches terminate and re-start mining, forward block
+        ## 0: keep mining current block, forward block
         if block.block_id in self.blocks_seen:
             return -1
-        # print("here")
         self.blockchain_tree.add(block, timestamp)
         self.blocks_seen.add(block.block_id)
-
         longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
         if longest_chain_leaf.block.block_id == self.block_being_mined.parent_block_id:
+            ## longest chain maintained
             return 0
-        
-        ## updates balance and mem_pool of the peer due to chain switch
+
+        ## longest chain switches
+        ## update self balance
         self.balance = longest_chain_leaf.balance_map[self.peer_id]
         old_parent_node = self.blockchain_tree.nodes[self.block_being_mined.parent_block_id]
+        ## update mempool
+        ## add the tx set in the old branch upto the LCA
+        ## remove those in the new branch from LCA onwards
         old_branch_tx_set, new_branch_tx_set = self.blockchain_tree.lca_branch_txs(old_parent_node)
         mempool_set = set(self.mem_pool)
         mempool_set = mempool_set.difference(new_branch_tx_set).union(old_branch_tx_set)
         self.mem_pool = list(mempool_set)
-        return 1 ## this will trigger a start_mining on the new longest chain
+        return 1
     
     def get_ratio(self) -> float:
+        ## Ratio of the number of peer's blocks in the chain to total mined
         my_blocks_in_longest_chain = self.blockchain_tree.number_of_peer_blocks(self.peer_id)
         return my_blocks_in_longest_chain / self.blocks_mined if self.blocks_mined != 0 else 0, my_blocks_in_longest_chain, self.blocks_mined
     
     def visualize_tree(self, output_dir: str):
+        ## Visualization code
         G = nx.DiGraph()
         labels = {}
 
         def add_node_edges(node: BlockChainNode):
-            G.add_node(node.block.block_id, height=node.height)  # Add the height attribute here
+            G.add_node(node.block.block_id, height=node.height)
             receive_time = int(node.receive_timestamp) if node.receive_timestamp is not None else 0
             mine_time = int(node.block.create_timestamp) if node.block.create_timestamp is not None else 0
             labels[node.block.block_id] = f"Miner {node.miner_id}\n N-Txs : {len(node.block.transactions)}\n Mine time: {mine_time}\n Receive time: {receive_time}"
@@ -156,12 +167,13 @@ class Peer:
             pos[node] = (x, max_height - y + min_height)
 
         # Draw the graph with square-shaped nodes
-        plt.figure(figsize=(6, 14))
+        plt.figure(figsize=(10, 25))
         nx.draw(G, pos, with_labels=True, labels=labels, node_size=3500, node_color=node_colors, font_size=5, font_weight="bold", width=2, edge_color="gray", node_shape='s')
         
         plt.title(f"Blockchain Tree of Peer {self.peer_id}")
         # plt.show()
         plt.savefig(f"{output_dir}/tree_peer_{self.peer_id}.png", dpi=300, bbox_inches="tight", pad_inches=0)
+        plt.close()
 
     def write_to_file(self, file_name: str):
         def add_node_edges_to_file(node: BlockChainNode, file, indent=""):
@@ -202,13 +214,14 @@ class P2PNetwork:
         self.initialize_latencies()
         self.initialize_event_queue()
 
-
     def initialize_event_queue(self):
+        ## Start transaction generation, mining for all peers
         self.event_queue = EventQueue()
         for i in range(self.num_peers):
             sender = self.peers[i]
             gen_tx_event = sender.generate_transaction(0, self.peers)
             self.event_queue.add_event(gen_tx_event)
+            ## add receive transaction events for neighbours
             self.forward_packet(sender, gen_tx_event.data, gen_tx_event.timestamp, i)
             hashing_power = self.low_hashing_power if sender.is_low_cpu else self.high_hashing_power
             end_mining_event = sender.start_mining(0, hashing_power, self.I)
@@ -239,6 +252,7 @@ class P2PNetwork:
                 break
 
     def check_connectivity(self):
+        ## does BFS to check graph connectedness
         visited = [False] * self.num_peers
         stack = [0]
         visited[0] = True
@@ -265,24 +279,25 @@ class P2PNetwork:
                     self.latencies[(neighbor.peer_id, peer.peer_id)] = self.latencies[(peer.peer_id, neighbor.peer_id)]
     
     def forward_packet(self, peer: Peer, data: Union[Transaction, Block], timestamp, sender_id: int):
+        ## loopless forwarding with random latency for packets (transactions, blocks)
         for neighbour in peer.neighbours:
             if neighbour.peer_id == sender_id:
                 continue
-            # print(self.latencies)
             latencies = self.latencies[(peer.peer_id, neighbour.peer_id)]
             rho = latencies["rho"]
             c = latencies["c"]
             d = random.expovariate((12/1024) / c)
             message_size = 1 if isinstance(data, Transaction) else len(data.transactions) ## number of KBs
             receiver_delay = rho + message_size * TX_SIZE / c + d
+            ## make the neighbour receive the packet with random delay
             event_type = EventType.RECEIVE_TRANSACTION if isinstance(data, Transaction) else EventType.RECEIVE_BLOCK
             event = Event(timestamp + receiver_delay, event_type, data, peer.peer_id, neighbour.peer_id)
             self.event_queue.add_event(event)
 
     def process_events(self, output_dir: str, stopping_height: int, suppress_output: bool):
+        ## process the queue
         while self.continue_simulation:
             while self.event_queue.queue:
-                # input()
                 event = self.event_queue.pop_event()
                 if event.event_type == EventType.GENERATE_TRANSACTION:
                     self.process_generate_transaction(event)
@@ -292,7 +307,7 @@ class P2PNetwork:
                     self.process_end_mining(event)
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
-                    
+                ## Stopping criterion
                 # check if all peers have reached stopping_height
                 if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
                     self.write_balances(f"{output_dir}/balances.txt")
@@ -312,8 +327,9 @@ class P2PNetwork:
         timestamp = event.timestamp
         peer = self.peers[id]
         gen_tx_event = peer.generate_transaction(timestamp, self.peers)
-        self.event_queue.add_event(gen_tx_event) ## add to event queue to generate next transaction
+        self.event_queue.add_event(gen_tx_event) ## add to event queue to recursively generate next transaction
         if event.data.amount != 0:
+            ## make sure transaction is not a dummy
             self.forward_packet(peer, gen_tx_event.data, gen_tx_event.timestamp, id)
 
     def process_receive_transaction(self, event: Event):
@@ -321,6 +337,7 @@ class P2PNetwork:
         transaction = event.data
         unseen_tx = receiver.receive_transaction(transaction)
         if unseen_tx:
+            ## forward only if new tx
             self.forward_packet(receiver, transaction, event.timestamp, event.sender)
 
     def process_end_mining(self, event: Event):
@@ -329,11 +346,12 @@ class P2PNetwork:
         block = event.data
         hashing_power = self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
         if block.block_id != peer.block_being_mined.block_id:
-            end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
-            self.event_queue.add_event(end_mining_event)
+            ## do not mine the block if the chain has switched in the mean time
             return
+        ## mine the block, and forward to neighbours
         peer.mine(block, event.timestamp) 
         self.forward_packet(peer, block, event.timestamp, id)
+        ## start mining all over again
         end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
         self.event_queue.add_event(end_mining_event)
 
@@ -342,10 +360,10 @@ class P2PNetwork:
         block = event.data
         hashing_power = self.low_hashing_power if receiver.is_low_cpu else self.high_hashing_power
         return_code = receiver.receive_block(block, event.timestamp)
-        # print(return_code, )
         if return_code != -1:
             self.forward_packet(receiver, block, event.timestamp, event.sender)
         if return_code == 1:
+            ## new longest chain formed, re-start mining on the same
             receiver.start_mining(event.timestamp, hashing_power, self.I)
             
     def write_balances(self, file_name: str):
