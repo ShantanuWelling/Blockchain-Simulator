@@ -214,8 +214,8 @@ class P2PNetwork:
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
                     # input()
-                    self.print_balances()
-                    self.print_blockchain_tree_height()
+                    # self.print_balances()
+                    # self.print_blockchain_tree_height()
                     if self.peers[3].blockchain_tree.longest_chain_leaf.height == 10:
                         self.print_balances()
                         self.print_blockchain_tree_height()
