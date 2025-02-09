@@ -129,7 +129,7 @@ class Peer:
 
         add_node_edges(self.blockchain_tree.root)
 
-        pos = nx.multipartite_layout(G, subset_key="height", align='vertical')
+        pos = nx.multipartite_layout(G, subset_key="height", align='horizontal')
 
         # Draw the graph with square-shaped nodes
         nx.draw(G, pos, with_labels=True, labels=labels, node_size=2000, node_color="skyblue", font_size=5, font_weight="bold", width=2, edge_color="gray", node_shape='s')
