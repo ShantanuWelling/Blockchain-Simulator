@@ -295,12 +295,12 @@ class P2PNetwork:
                     
                 # check if all peers have reached stopping_height
                 if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
-                    if not suppress_output:
                         self.write_balances(f"{output_dir}/balances.txt")
                         self.write_ratios(f"{output_dir}/ratios.txt")
                         for peer in self.peers:
                             peer.write_to_file(f"{output_dir}/tree_peer_{peer.peer_id}.txt")
-                            peer.visualize_tree(output_dir = output_dir)
+                            if not suppress_output:
+                                peer.visualize_tree(output_dir = output_dir)
                     
                     print(f"All peers have reached height {stopping_height}. Exiting simulation at time {event.timestamp}...")
                     self.continue_simulation = False
