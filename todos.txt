@@ -4,6 +4,5 @@ Update balances properly in add
 
 #
 1. Flow chart Design Doc
-5. Readme for compiling and running
 6. Report
 7. Comment code
