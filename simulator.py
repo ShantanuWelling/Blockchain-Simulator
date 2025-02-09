@@ -4,7 +4,7 @@ import uuid
 from blockchain_lib import *
 from typing import Set, Union, Dict, List
 import networkx as nx
-# from matplotlib import pyplot as plt
+from matplotlib import pyplot as plt
 
 ## global constants
 TX_SIZE = 1/1024  # 1 KB (in MB)
@@ -138,7 +138,24 @@ class Peer:
         plt.show()
 
     def write_to_file(self, file_name):
-        pass
+        def add_node_edges_to_file(node: BlockChainNode, file, indent=""):
+            file.write(f"{indent}Block ID: {node.block.block_id}\n")
+            file.write(f"{indent}Miner ID: {node.miner_id}\n")
+            file.write(f"{indent}Number of Transactions: {len(node.block.transactions)}\n")
+            file.write(f"{indent}Mine Time: {node.block.create_timestamp}\n")
+            file.write(f"{indent}Receive Time: {node.receive_timestamp}\n")
+            file.write(f"{indent}Height: {node.height}\n")
+            file.write(f"{indent}" + "-" * 40 + "\n")
+            
+            # Recursively write child blocks with increased indentation
+            for child in node.children:
+                add_node_edges_to_file(child, file, indent + "    ")
+
+        with open(file_name, 'w') as file:
+            file.write(f"Blockchain Tree of Peer {self.peer_id}\n")
+            file.write("=" * 40 + "\n")
+            add_node_edges_to_file(self.blockchain_tree.root, file)
+
 
 
 class P2PNetwork:
@@ -256,7 +273,8 @@ class P2PNetwork:
                         # self.print_blockchain_tree_height()
                         # print(f'End Timestamp: {event.timestamp} secs')
                         self.print_ratios()
-                        # self.peers[3].visualize_tree()
+                        self.peers[3].visualize_tree()
+                        self.peers[3].write_to_file("example.txt")
                         exit()
                     
     
