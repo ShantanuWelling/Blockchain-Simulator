@@ -17,9 +17,9 @@ class Peer:
         self.balance = balance
         self.is_slow = is_slow
         self.is_low_cpu = is_low_cpu
-        self.mem_pool: list[Transaction] = []
+        self.mem_pool: List[Transaction] = []
         self.interarrival_time = interarrival_time
-        self.neighbours: list[Peer] = []
+        self.neighbours: List[Peer] = []
         self.transactions_seen: Set[uuid.UUID] = set() ## add tx when generated, received by peer, (or added to blockchain: why?? AD)
         self.blocks_seen: Set[uuid.UUID] = set() ## add block when received by peer or added to blockchain
         self.blockchain_tree = BlockchainTree()
@@ -61,7 +61,7 @@ class Peer:
         self.mem_pool = list(set(self.mem_pool).difference(set(block.transactions)))
 
     def choose_transactions(self) -> List[Transaction]:
-        transactions: list[Transaction] = []
+        transactions: List[Transaction] = []
         balance_map = self.blockchain_tree.longest_chain_leaf.balance_map.copy()
         for tx in sorted(self.mem_pool):
             if len(transactions) == 999:
@@ -108,7 +108,7 @@ class Peer:
 
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float): ## z0 is frac_slow, z1 is frac_low_cpu
-        self.peers: list[Peer] = []
+        self.peers: List[Peer] = []
         self.num_peers = num_peers
         self.frac_slow = frac_slow
         self.frac_low_cpu = frac_low_cpu
