@@ -110,7 +110,7 @@ class Peer:
     
     def get_ratio(self) -> float:
         my_blocks_in_longest_chain = self.blockchain_tree.number_of_peer_blocks(self.peer_id)
-        return my_blocks_in_longest_chain / self.blocks_mined if self.blocks_mined != 0 else 0
+        return my_blocks_in_longest_chain / self.blocks_mined if self.blocks_mined != 0 else 0, my_blocks_in_longest_chain, self.blocks_mined
         
 
 class P2PNetwork:
@@ -223,9 +223,10 @@ class P2PNetwork:
                     # input()
                     # self.print_balances()
                     # self.print_blockchain_tree_height()
-                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 10:
-                        self.print_balances()
-                        self.print_blockchain_tree_height()
+                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 20:
+                        # self.print_balances()
+                        # self.print_blockchain_tree_height()
+                        print(f'End Timestamp: {event.timestamp} secs')
                         self.print_ratios()
                         exit()
                     
@@ -297,7 +298,13 @@ class P2PNetwork:
                 ratio_map['fast_high'].append(peer.get_ratio())
         # print average ratios
         for key in ratio_map:
-            print(f"Average ratio for {key}: {sum(ratio_map[key]) / len(ratio_map[key])}")
+            ratios = [row[0] for row in ratio_map[key]]
+            my_blocks_in_longest_chain = [row[1] for row in ratio_map[key]]
+            blocks_mined = [row[2] for row in ratio_map[key]]
+            print(f"Average ratio for {key}: {sum(ratios) / len(ratios)}")
+            print(f"Average blocks in longest chain for {key}: {sum(my_blocks_in_longest_chain) / len(my_blocks_in_longest_chain)}")
+            print(f"Average blocks mined for {key}: {sum(blocks_mined) / len(blocks_mined)}")
+            
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='P2P Network Simulator')
