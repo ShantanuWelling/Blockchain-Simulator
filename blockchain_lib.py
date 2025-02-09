@@ -96,6 +96,9 @@ class BlockChainNode:
         else:
             self.balance_map = defaultdict(int) ## SW
 
+        def __eq__(node1: "BlockChainNode", node2: "BlockChainNode") -> bool:
+            return node1.block.block_id == node2.block.block_id
+
 class BlockchainTree:
     def __init__(self):
         self.genesis_block = Block(0, [], -1, 0)
@@ -103,15 +106,35 @@ class BlockchainTree:
         self.buffer: list[Block] = [] # Buffer for blocks that are not yet part of the blockchain
         self.nodes: Dict[int, BlockChainNode] = {0: self.root}
         self.longest_chain_leaf = self.root
+        self.longest_chain_txs: Set["Transaction"] = set()
         self.height = 0
 
-    def chain_transactions(self, block: BlockChainNode) -> Set[Transaction]:
-        tx_set = set()
-        curr_node = block
+    def lca_branch_txs(self, node: BlockChainNode):
+        longest_chain = []
+        block_chain = []
+        curr_node = self.longest_chain_leaf
         while curr_node:
-            tx_set.union(set(curr_node.block.transactions))
+            longest_chain.append(curr_node)
             curr_node = curr_node.parent
-        return tx_set
+        longest_chain.reverse()
+        curr_node = node
+        while curr_node:
+            block_chain.append(curr_node)
+            curr_node = curr_node.parent
+        block_chain.reverse()
+
+        while len(block_chain) > 0 and block_chain[0] == longest_chain[0]:
+            longest_chain.pop(0)
+            block_chain.pop(0)
+        block_branch_txs = set(sum([node.block.transactions for node in block_chain], []))
+        longest_branch_txs = set(sum([node.block.transactions for node in longest_chain], []))
+        return (block_branch_txs, longest_branch_txs)
+
+    def chain_transactions(self, node: BlockChainNode) -> Set[Transaction]:
+        if node.parent == self.longest_chain_leaf:
+            return self.longest_chain_txs.union(set(node.block.transactions))
+        txs_to_add, txs_to_remove = self.lca_branch_txs(node)
+        return self.longest_chain_txs.union(txs_to_add).difference(txs_to_remove)
     
     def add(self, block: Block) -> Block:
         self.buffer.append(block)
@@ -145,7 +168,6 @@ class BlockchainTree:
                 if chain_transactions.intersection(set(block.transactions)):
                     self.buffer.remove(block)
                     # print("b4")
-                    
                     continue
 
                 ## Add tx_ids of block in own seen_txs if added on longest chain?
@@ -159,6 +181,7 @@ class BlockchainTree:
                 longest_chain_timestamp = self.longest_chain_leaf.block.create_timestamp
                 if new_node.height > self.height or new_node.height == self.height and longest_chain_timestamp > block.create_timestamp:
                     ## Switch chain if same length but the new block is chronologically earlier than old?
+                    self.longest_chain_txs = self.chain_transactions(new_node)
                     self.height = new_node.height
                     self.longest_chain_leaf = new_node
 

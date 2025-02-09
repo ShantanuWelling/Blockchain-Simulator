@@ -58,8 +58,7 @@ class Peer:
         self.block_being_mined = None
         self.blocks_seen.add(block.block_id)
         ## remove txs from mempool
-        self.mem_pool = [tx for tx in self.mem_pool if tx.tx_id not in block.transactions]
-
+        self.mem_pool = list(set(self.mem_pool).difference(set(block.transactions)))
 
     def choose_transactions(self) -> List[Transaction]:
         transactions: list[Transaction] = []
@@ -90,8 +89,6 @@ class Peer:
         # 1: need to re-start mining since longest chain switches, 0: keep mining current block, forward in both
         if block.block_id in self.blocks_seen:
             return -1
-        chain_tx_set = self.blockchain_tree.chain_transactions(self.blockchain_tree.longest_chain_leaf)
-        chain_tx_set = chain_tx_set.union(self.block_being_mined.transactions)
         # print("here")
         self.blockchain_tree.add(block)
         self.blocks_seen.add(block.block_id)
@@ -102,10 +99,11 @@ class Peer:
         
         ## updates balance and mem_pool of the peer due to chain switch
         self.balance = longest_chain_leaf.balance_map[self.peer_id]
-        new_chain_tx_set = self.blockchain_tree.chain_transactions(self.blockchain_tree.longest_chain_leaf)
-        mempool_set = set(self.mem_pool).union(chain_tx_set).difference(new_chain_tx_set)
+        old_parent_node = self.blockchain_tree.nodes[self.block_being_mined.parent_block_id]
+        old_branch_tx_set, new_branch_tx_set = self.blockchain_tree.lca_branch_txs(old_parent_node)
+        mempool_set = set(self.mem_pool)
+        mempool_set = mempool_set.difference(new_branch_tx_set).union(old_branch_tx_set)
         self.mem_pool = list(mempool_set)
-
         return 1 ## this will trigger a start_mining on the new longest chain
 
 class P2PNetwork:
@@ -216,12 +214,12 @@ class P2PNetwork:
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
                     # input()
-                    # self.print_balances()
-                    # self.print_blockchain_tree_height()
+                    self.print_balances()
+                    self.print_blockchain_tree_height()
                     if self.peers[3].blockchain_tree.longest_chain_leaf.height == 10:
                         self.print_balances()
                         self.print_blockchain_tree_height()
-                        input()
+                        exit()
                     
     
     def process_generate_transaction(self, event: Event):
