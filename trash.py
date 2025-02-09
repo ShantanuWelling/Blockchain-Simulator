@@ -1,30 +1,27 @@
-def visualize_tree(self):
-        G = nx.DiGraph()
-        labels = {}
+# Find the longest chain by recursively checking the depth of the tree
+    node_colors = []
+    def find_longest_chain(node: BlockChainNode):
+        # Start from the node and go to its children to find the longest chain
+        longest_chain = [node]  # The current node is part of the chain
+        max_depth = 0
 
-        def add_node_edges(node: BlockChainNode):
-            G.add_node(node.block.block_id, height=node.height)  # Add the height attribute here
-            labels[node.block.block_id] = f"Miner {node.miner_id}\n N-Txs : {len(node.block.transactions)}\n Mine time: {node.block.create_timestamp}\n Receive time: {node.receive_timestamp}"
-            if node.parent:
-                G.add_edge(node.parent.block.block_id, node.block.block_id)
+        # Find the longest chain among children
+        for child in node.children:
+            child_chain = find_longest_chain(child)
+            if len(child_chain) > max_depth:
+                longest_chain = child_chain
+                max_depth = len(child_chain)
 
-            for child in node.children:
-                add_node_edges(child)
+        return longest_chain
 
-        add_node_edges(self.blockchain_tree.root)
+    # Find the longest chain starting from the root
+    longest_chain = find_longest_chain(self.blockchain_tree.root)
 
-        pos = nx.multipartite_layout(G, subset_key="height", align='horizontal')
-
-        # Invert the height to ensure the root node is at the top
-        min_height = min([node[1]['height'] for node in G.nodes(data=True)])
-        max_height = max([node[1]['height'] for node in G.nodes(data=True)])
-        
-        for node, (x, y) in pos.items():
-            # Invert the y-axis to place root at the top
-            pos[node] = (x, max_height - y + min_height)
-
-        # Draw the graph with square-shaped nodes
-        nx.draw(G, pos, with_labels=True, labels=labels, node_size=2000, node_color="skyblue", font_size=5, font_weight="bold", width=2, edge_color="gray", node_shape='s')
-        
-        plt.title(f"Blockchain Tree of Peer {self.peer_id}")
-        plt.show()
+    # Mark nodes in the longest chain as green
+    for node in longest_chain:
+        longest_chain_nodes.add(node.block.block_id)
+    for node in G.nodes:
+      if node in longest_chain_nodes:
+          node_colors.append('green')
+      else:
+          node_colors.append('blue')
