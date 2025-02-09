@@ -1,6 +1,7 @@
 import random
 import argparse
 import uuid
+import os
 from blockchain_lib import *
 from typing import Set, Union, Dict, List
 import networkx as nx
@@ -114,7 +115,7 @@ class Peer:
         my_blocks_in_longest_chain = self.blockchain_tree.number_of_peer_blocks(self.peer_id)
         return my_blocks_in_longest_chain / self.blocks_mined if self.blocks_mined != 0 else 0, my_blocks_in_longest_chain, self.blocks_mined
     
-    def visualize_tree(self):
+    def visualize_tree(self, output_dir: str):
         G = nx.DiGraph()
         labels = {}
 
@@ -160,9 +161,9 @@ class Peer:
         
         plt.title(f"Blockchain Tree of Peer {self.peer_id}")
         # plt.show()
-        plt.savefig(f"results/blockchain_tree_peer_{self.peer_id}.png", dpi=400, bbox_inches="tight", pad_inches=0)
+        plt.savefig(f"{output_dir}/tree_peer_{self.peer_id}.png", dpi=300, bbox_inches="tight", pad_inches=0)
 
-    def write_to_file(self, file_name):
+    def write_to_file(self, file_name: str):
         def add_node_edges_to_file(node: BlockChainNode, file, indent=""):
             file.write(f"{indent}Block ID: {node.block.block_id}\n")
             file.write(f"{indent}Parent Block ID: {node.parent.block.block_id if node.parent else 'None'}\n")            
@@ -278,7 +279,7 @@ class P2PNetwork:
             event = Event(timestamp + receiver_delay, event_type, data, peer.peer_id, neighbour.peer_id)
             self.event_queue.add_event(event)
 
-    def process_events(self):
+    def process_events(self, output_dir: str, stopping_height: int, suppress_output: bool):
         while self.continue_simulation:
             while self.event_queue.queue:
                 # input()
@@ -291,17 +292,19 @@ class P2PNetwork:
                     self.process_end_mining(event)
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
-                    # input()
-                    # self.print_balances()
-                    # self.print_blockchain_tree_height()
-                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 10:
-                        # self.print_balances()
-                        # self.print_blockchain_tree_height()
-                        # print(f'End Timestamp: {event.timestamp} secs')
-                        self.print_ratios()
-                        self.peers[3].visualize_tree()
-                        self.peers[3].write_to_file(f"results/blockchain_tree_peer_{self.peers[3].peer_id}.txt") #TODO: for each peer write to file
-                        exit()
+                    
+                # check if all peers have reached stopping_height
+                if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
+                    if not suppress_output:
+                        self.write_balances(f"{output_dir}/balances.txt")
+                        self.write_ratios(f"{output_dir}/ratios.txt")
+                        for peer in self.peers:
+                            peer.write_to_file(f"{output_dir}/tree_peer_{peer.peer_id}.txt")
+                            peer.visualize_tree(output_dir = output_dir)
+                    
+                    print(f"All peers have reached height {stopping_height}. Exiting simulation at time {event.timestamp}...")
+                    self.continue_simulation = False
+                    break 
                     
     
     def process_generate_transaction(self, event: Event):
@@ -345,20 +348,20 @@ class P2PNetwork:
         if return_code == 1:
             receiver.start_mining(event.timestamp, hashing_power, self.I)
             
-    def print_balances(self):
+    def write_balances(self, file_name: str):
         for peer in self.peers:
-            # print(f"Peer {peer.peer_id} has balance {peer.balance}")
             balance_map = peer.blockchain_tree.longest_chain_leaf.balance_map
             # sort balance map by keys
             sorted_balance_map = dict(sorted(balance_map.items()))
-            print(f"Peer {peer.peer_id} balance map: {sorted_balance_map}")
-            print(f"Sum balance map {sum(sorted_balance_map.values())}")
+            with open(file_name, 'w+') as file:
+                file.write(f"Peer {peer.peer_id} balance map: {sorted_balance_map}\n")
+                file.write(f"Sum balance map {sum(sorted_balance_map.values())}\n")
     
     def print_blockchain_tree_height(self):
         for peer in self.peers:
             print(f"Peer {peer.peer_id} has blockchain height {peer.blockchain_tree.longest_chain_leaf.height}")
         
-    def print_ratios(self):
+    def write_ratios(self, file_name: str):
         ratio_map = {'slow_low': [], 'slow_high': [], 'fast_low': [], 'fast_high': []}
         for peer in self.peers:
             if peer.is_slow and peer.is_low_cpu:
@@ -369,14 +372,20 @@ class P2PNetwork:
                 ratio_map['fast_low'].append(peer.get_ratio())
             else:
                 ratio_map['fast_high'].append(peer.get_ratio())
-        # print average ratios
+        
         for key in ratio_map:
             ratios = [row[0] for row in ratio_map[key]]
             my_blocks_in_longest_chain = [row[1] for row in ratio_map[key]]
             blocks_mined = [row[2] for row in ratio_map[key]]
-            print(f"Average ratio for {key}: {sum(ratios) / len(ratios)}")
-            print(f"Average blocks in longest chain for {key}: {sum(my_blocks_in_longest_chain) / len(my_blocks_in_longest_chain)}")
-            print(f"Average blocks mined for {key}: {sum(blocks_mined) / len(blocks_mined)}")
+            # write to file_name
+            with open(file_name, 'w+') as file:
+                avg_ratio = sum(ratios) / len(ratios) if len(ratios) != 0 else 0
+                avg_blocks_longest_chain = sum(my_blocks_in_longest_chain) / len(my_blocks_in_longest_chain) if len(my_blocks_in_longest_chain) != 0 else 0
+                avg_blocks_mined = sum(blocks_mined) / len(blocks_mined) if len(blocks_mined) != 0 else 0
+                
+                file.write(f"Average ratio for {key}: {avg_ratio}\n")
+                file.write(f"Average blocks in longest chain for {key}: {avg_blocks_longest_chain}\n")
+                file.write(f"Average blocks mined for {key}: {avg_blocks_mined}\n")
             
         
 if __name__ == "__main__":
@@ -386,16 +395,22 @@ if __name__ == "__main__":
     parser.add_argument('-frac_low_cpu', type=float, help='Fraction of low CPU peers', required=True)
     parser.add_argument('-interarrival_time', type=float, help='Mean interarrival time of transactions', required=True)
     parser.add_argument('-I', type=float, help='Block mining time', required=True)
+    parser.add_argument('-stopping_height', type=int, help='Simulation stopping criterion', default=10)
+    parser.add_argument('-v', type=bool, help='Verbose, logs, plots', default=True)
     args = parser.parse_args()
 
     num_peers = args.num_peers
     frac_slow = args.frac_slow
     frac_low_cpu = args.frac_low_cpu
     interarrival_time = args.interarrival_time
+    stopping_height = args.stopping_height
+    suppress_output = not args.v
     I = args.I
-
+    output_dir = f"results_{num_peers}_{int(100*frac_slow)}_{int(100*frac_low_cpu)}_{int(interarrival_time)}_{int(I)}"
+    os.makedirs(output_dir, exist_ok = True)
+    
     network = P2PNetwork(num_peers, frac_slow, frac_low_cpu, interarrival_time, I)
-    network.process_events()
+    network.process_events(output_dir = output_dir, stopping_height = stopping_height, suppress_output = suppress_output)
 
 
         
