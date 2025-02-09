@@ -3,6 +3,8 @@ import argparse
 import uuid
 from blockchain_lib import *
 from typing import Set, Union, Dict, List
+import networkx as nx
+# from matplotlib import pyplot as plt
 
 ## global constants
 TX_SIZE = 1/1024  # 1 KB (in MB)
@@ -54,8 +56,8 @@ class Peer:
         event = Event(timestamp + mining_time, EventType.END_MINING, block, self.peer_id, None)
         return event
     
-    def mine(self, block: Block):
-        self.blockchain_tree.add(block) ## balance map updated
+    def mine(self, block: Block, timestamp):
+        self.blockchain_tree.add(block, timestamp) ## balance map updated
         self.block_being_mined = None
         self.blocks_seen.add(block.block_id)
         ## remove txs from mempool
@@ -83,7 +85,7 @@ class Peer:
         self.transactions_seen.add(transaction.tx_id)
         return True
     
-    def receive_block(self, block: Block) -> int:
+    def receive_block(self, block: Block, timestamp) -> int:
         ## validate transactions
         ## append in own tree
         ## check if already mining and if need to change the block being mined on
@@ -92,7 +94,7 @@ class Peer:
         if block.block_id in self.blocks_seen:
             return -1
         # print("here")
-        self.blockchain_tree.add(block)
+        self.blockchain_tree.add(block, timestamp)
         self.blocks_seen.add(block.block_id)
 
         longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
@@ -111,7 +113,33 @@ class Peer:
     def get_ratio(self) -> float:
         my_blocks_in_longest_chain = self.blockchain_tree.number_of_peer_blocks(self.peer_id)
         return my_blocks_in_longest_chain / self.blocks_mined if self.blocks_mined != 0 else 0, my_blocks_in_longest_chain, self.blocks_mined
+    
+    def visualize_tree(self):
+        G = nx.DiGraph()
+        labels = {}
+
+        def add_node_edges(node: BlockChainNode):
+            G.add_node(node.block.block_id, height=node.height)  # Add the height attribute here
+            labels[node.block.block_id] = f"Miner {node.miner_id}\n N-Txs : {len(node.block.transactions)}\n Mine time: {node.block.create_timestamp}\n Receive time: {node.receive_timestamp}"
+            if node.parent:
+                G.add_edge(node.parent.block.block_id, node.block.block_id)
+
+            for child in node.children:
+                add_node_edges(child)
+
+        add_node_edges(self.blockchain_tree.root)
+
+        pos = nx.multipartite_layout(G, subset_key="height", align='vertical')
+
+        # Draw the graph with square-shaped nodes
+        nx.draw(G, pos, with_labels=True, labels=labels, node_size=2000, node_color="skyblue", font_size=5, font_weight="bold", width=2, edge_color="gray", node_shape='s')
         
+        plt.title(f"Blockchain Tree of Peer {self.peer_id}")
+        plt.show()
+
+    def write_to_file(self, file_name):
+        pass
+
 
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float): ## z0 is frac_slow, z1 is frac_low_cpu
@@ -223,11 +251,12 @@ class P2PNetwork:
                     # input()
                     # self.print_balances()
                     # self.print_blockchain_tree_height()
-                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 20:
+                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 5:
                         # self.print_balances()
                         # self.print_blockchain_tree_height()
-                        print(f'End Timestamp: {event.timestamp} secs')
+                        # print(f'End Timestamp: {event.timestamp} secs')
                         self.print_ratios()
+                        # self.peers[3].visualize_tree()
                         exit()
                     
     
@@ -256,7 +285,7 @@ class P2PNetwork:
             end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
             self.event_queue.add_event(end_mining_event)
             return
-        peer.mine(block) 
+        peer.mine(block, event.timestamp) 
         self.forward_packet(peer, block, event.timestamp, id)
         end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
         self.event_queue.add_event(end_mining_event)
@@ -265,7 +294,7 @@ class P2PNetwork:
         receiver = self.peers[event.receiver]
         block = event.data
         hashing_power = self.low_hashing_power if receiver.is_low_cpu else self.high_hashing_power
-        return_code = receiver.receive_block(block)
+        return_code = receiver.receive_block(block, event.timestamp)
         # print(return_code, )
         if return_code != -1:
             self.forward_packet(receiver, block, event.timestamp, event.sender)

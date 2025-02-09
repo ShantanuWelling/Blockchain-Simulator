@@ -80,13 +80,14 @@ class Block:
         self.parent_block_id = parent_block_id
 
 class BlockChainNode:
-    def __init__(self, block: Block, parent: "BlockChainNode"):
+    def __init__(self, block: Block, parent: "BlockChainNode", timestamp):
         self.block = block
         self.children: list[BlockChainNode] = []
         self.parent = parent
         self.height = self.parent.height + 1 if self.parent else 0
         self.balance_map: Dict[int, int] = {}
         self.miner_id: int = -1
+        self.receive_timestamp = timestamp
         if block.transactions:
             self.miner_id = block.transactions[0].receiver
         ## update balance map
@@ -105,7 +106,7 @@ class BlockChainNode:
 class BlockchainTree:
     def __init__(self):
         self.genesis_block = Block(0, [], -1, 0)
-        self.root = BlockChainNode(self.genesis_block, None)
+        self.root = BlockChainNode(self.genesis_block, None, None)
         self.buffer: list[Block] = [] # Buffer for blocks that are not yet part of the blockchain
         self.nodes: Dict[int, BlockChainNode] = {0: self.root}
         self.longest_chain_leaf = self.root
@@ -139,7 +140,7 @@ class BlockchainTree:
         txs_to_add, txs_to_remove = self.lca_branch_txs(node)
         return self.longest_chain_txs.union(txs_to_add).difference(txs_to_remove)
     
-    def add(self, block: Block) -> Block:
+    def add(self, block: Block, timestamp) -> Block:
         self.buffer.append(block)
         prev_buffer_len = -1
 
@@ -177,7 +178,7 @@ class BlockchainTree:
                 ## update of Peer's mem_pool done in mine, and in receive block
                 # print('update')
                 parent_node = self.nodes[block.parent_block_id]
-                new_node = BlockChainNode(block, parent_node)
+                new_node = BlockChainNode(block, parent_node, timestamp)
                 self.nodes[block.block_id] = new_node
                 parent_node.children.append(new_node)
                 self.buffer.remove(block)
