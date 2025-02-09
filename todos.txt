@@ -3,6 +3,5 @@ Node can fake transaction sender and mine that transaction
 Update balances properly in add
 
 #
-1. Flow chart Design Doc
 6. Report
 7. Comment code

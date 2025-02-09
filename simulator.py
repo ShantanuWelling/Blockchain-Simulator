@@ -371,7 +371,7 @@ class P2PNetwork:
             balance_map = peer.blockchain_tree.longest_chain_leaf.balance_map
             # sort balance map by keys
             sorted_balance_map = dict(sorted(balance_map.items()))
-            with open(file_name, 'w+') as file:
+            with open(file_name, 'a') as file:
                 file.write(f"Peer {peer.peer_id} balance map: {sorted_balance_map}\n")
                 file.write(f"Sum balance map {sum(sorted_balance_map.values())}\n")
     
@@ -381,22 +381,28 @@ class P2PNetwork:
         
     def write_ratios(self, file_name: str):
         ratio_map = {'slow_low': [], 'slow_high': [], 'fast_low': [], 'fast_high': []}
+        peer_ratios = []
         for peer in self.peers:
+            peer_ratio = peer.get_ratio()
             if peer.is_slow and peer.is_low_cpu:
-                ratio_map['slow_low'].append(peer.get_ratio())
+                ratio_map['slow_low'].append(peer_ratio)
             elif peer.is_slow and not peer.is_low_cpu:
-                ratio_map['slow_high'].append(peer.get_ratio())
+                ratio_map['slow_high'].append(peer_ratio)
             elif not peer.is_slow and peer.is_low_cpu:
-                ratio_map['fast_low'].append(peer.get_ratio())
+                ratio_map['fast_low'].append(peer_ratio)
             else:
-                ratio_map['fast_high'].append(peer.get_ratio())
+                ratio_map['fast_high'].append(peer_ratio)
+            network_metadata = "slow" if peer.is_slow else "fast"
+            cpu_metadata = "low" if peer.is_low_cpu else "high"
+            ratio_string = f"Peer {peer.peer_id} {network_metadata} {cpu_metadata} ratio: {peer_ratio[0]}, blocks in longest chain: {peer_ratio[1]}, blocks mined: {peer_ratio[2]}"
+            peer_ratios.append(ratio_string)
         
         for key in ratio_map:
             ratios = [row[0] for row in ratio_map[key]]
             my_blocks_in_longest_chain = [row[1] for row in ratio_map[key]]
             blocks_mined = [row[2] for row in ratio_map[key]]
             # write to file_name
-            with open(file_name, 'w+') as file:
+            with open(file_name, 'a') as file:
                 avg_ratio = sum(ratios) / len(ratios) if len(ratios) != 0 else 0
                 avg_blocks_longest_chain = sum(my_blocks_in_longest_chain) / len(my_blocks_in_longest_chain) if len(my_blocks_in_longest_chain) != 0 else 0
                 avg_blocks_mined = sum(blocks_mined) / len(blocks_mined) if len(blocks_mined) != 0 else 0
@@ -404,6 +410,10 @@ class P2PNetwork:
                 file.write(f"Average ratio for {key}: {avg_ratio}\n")
                 file.write(f"Average blocks in longest chain for {key}: {avg_blocks_longest_chain}\n")
                 file.write(f"Average blocks mined for {key}: {avg_blocks_mined}\n")
+        
+        for peer_data in peer_ratios:
+            with open(file_name, 'a') as file:
+                file.write(peer_data + "\n")
             
         
 if __name__ == "__main__":
