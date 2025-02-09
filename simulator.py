@@ -120,7 +120,9 @@ class Peer:
 
         def add_node_edges(node: BlockChainNode):
             G.add_node(node.block.block_id, height=node.height)  # Add the height attribute here
-            labels[node.block.block_id] = f"Miner {node.miner_id}\n N-Txs : {len(node.block.transactions)}\n Mine time: {node.block.create_timestamp}\n Receive time: {node.receive_timestamp}"
+            receive_time = int(node.receive_timestamp) if node.receive_timestamp is not None else 0
+            mine_time = int(node.block.create_timestamp) if node.block.create_timestamp is not None else 0
+            labels[node.block.block_id] = f"Miner {node.miner_id}\n N-Txs : {len(node.block.transactions)}\n Mine time: {mine_time}\n Receive time: {receive_time}"
             if node.parent:
                 G.add_edge(node.parent.block.block_id, node.block.block_id)
 
@@ -128,22 +130,46 @@ class Peer:
                 add_node_edges(child)
 
         add_node_edges(self.blockchain_tree.root)
+        
+        node_colors = []
+
+        longest_chain_nodes = set()
+        curr_node = self.blockchain_tree.longest_chain_leaf
+        while curr_node:
+            longest_chain_nodes.add(curr_node.block.block_id)
+            curr_node = curr_node.parent
+            
+        for node in G.nodes:
+            if node in longest_chain_nodes:
+                node_colors.append('lightgreen')
+            else:
+                node_colors.append('skyblue')
 
         pos = nx.multipartite_layout(G, subset_key="height", align='horizontal')
+        
+        min_height = min([node[1]['height'] for node in G.nodes(data=True)])
+        max_height = max([node[1]['height'] for node in G.nodes(data=True)])
+        
+        for node, (x, y) in pos.items():
+            # Invert the y-axis to place root at the top
+            pos[node] = (x, max_height - y + min_height)
 
         # Draw the graph with square-shaped nodes
-        nx.draw(G, pos, with_labels=True, labels=labels, node_size=2000, node_color="skyblue", font_size=5, font_weight="bold", width=2, edge_color="gray", node_shape='s')
+        plt.figure(figsize=(6, 14))
+        nx.draw(G, pos, with_labels=True, labels=labels, node_size=3500, node_color=node_colors, font_size=5, font_weight="bold", width=2, edge_color="gray", node_shape='s')
         
         plt.title(f"Blockchain Tree of Peer {self.peer_id}")
-        plt.show()
+        # plt.show()
+        plt.savefig(f"results/blockchain_tree_peer_{self.peer_id}.png", dpi=400, bbox_inches="tight", pad_inches=0)
 
     def write_to_file(self, file_name):
         def add_node_edges_to_file(node: BlockChainNode, file, indent=""):
             file.write(f"{indent}Block ID: {node.block.block_id}\n")
+            file.write(f"{indent}Parent Block ID: {node.parent.block.block_id if node.parent else 'None'}\n")            
             file.write(f"{indent}Miner ID: {node.miner_id}\n")
             file.write(f"{indent}Number of Transactions: {len(node.block.transactions)}\n")
-            file.write(f"{indent}Mine Time: {node.block.create_timestamp}\n")
-            file.write(f"{indent}Receive Time: {node.receive_timestamp}\n")
+            file.write(f"{indent}Mine Time: {int(node.block.create_timestamp) if node.block.create_timestamp is not None else 0}\n")
+            file.write(f"{indent}Receive Time: {int(node.receive_timestamp) if node.receive_timestamp is not None else 0}\n")
             file.write(f"{indent}Height: {node.height}\n")
             file.write(f"{indent}" + "-" * 40 + "\n")
             
@@ -268,13 +294,13 @@ class P2PNetwork:
                     # input()
                     # self.print_balances()
                     # self.print_blockchain_tree_height()
-                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 5:
+                    if self.peers[3].blockchain_tree.longest_chain_leaf.height == 10:
                         # self.print_balances()
                         # self.print_blockchain_tree_height()
                         # print(f'End Timestamp: {event.timestamp} secs')
                         self.print_ratios()
                         self.peers[3].visualize_tree()
-                        self.peers[3].write_to_file("example.txt")
+                        self.peers[3].write_to_file(f"results/blockchain_tree_peer_{self.peers[3].peer_id}.txt") #TODO: for each peer write to file
                         exit()
                     
     
