@@ -24,6 +24,7 @@ class Peer:
         self.blocks_seen: Set[uuid.UUID] = set() ## add block when received by peer or added to blockchain
         self.blockchain_tree = BlockchainTree()
         self.block_being_mined = None
+        self.blocks_mined: int = 0
 
     def generate_transaction(self, timestamp, peers: List["Peer"]) -> Event:
         delay = random.expovariate(1.0 / self.interarrival_time)
@@ -59,6 +60,7 @@ class Peer:
         self.blocks_seen.add(block.block_id)
         ## remove txs from mempool
         self.mem_pool = list(set(self.mem_pool).difference(set(block.transactions)))
+        self.blocks_mined = self.blocks_mined + 1
 
     def choose_transactions(self) -> List[Transaction]:
         transactions: List[Transaction] = []
@@ -105,6 +107,11 @@ class Peer:
         mempool_set = mempool_set.difference(new_branch_tx_set).union(old_branch_tx_set)
         self.mem_pool = list(mempool_set)
         return 1 ## this will trigger a start_mining on the new longest chain
+    
+    def get_ratio(self) -> float:
+        my_blocks_in_longest_chain = self.blockchain_tree.number_of_peer_blocks(self.peer_id)
+        return my_blocks_in_longest_chain / self.blocks_mined if self.blocks_mined != 0 else 0
+        
 
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float): ## z0 is frac_slow, z1 is frac_low_cpu
@@ -219,6 +226,7 @@ class P2PNetwork:
                     if self.peers[3].blockchain_tree.longest_chain_leaf.height == 10:
                         self.print_balances()
                         self.print_blockchain_tree_height()
+                        self.print_ratios()
                         exit()
                     
     
@@ -276,7 +284,21 @@ class P2PNetwork:
         for peer in self.peers:
             print(f"Peer {peer.peer_id} has blockchain height {peer.blockchain_tree.longest_chain_leaf.height}")
         
-      
+    def print_ratios(self):
+        ratio_map = {'slow_low': [], 'slow_high': [], 'fast_low': [], 'fast_high': []}
+        for peer in self.peers:
+            if peer.is_slow and peer.is_low_cpu:
+                ratio_map['slow_low'].append(peer.get_ratio())
+            elif peer.is_slow and not peer.is_low_cpu:
+                ratio_map['slow_high'].append(peer.get_ratio())
+            elif not peer.is_slow and peer.is_low_cpu:
+                ratio_map['fast_low'].append(peer.get_ratio())
+            else:
+                ratio_map['fast_high'].append(peer.get_ratio())
+        # print average ratios
+        for key in ratio_map:
+            print(f"Average ratio for {key}: {sum(ratio_map[key]) / len(ratio_map[key])}")
+        
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='P2P Network Simulator')
     parser.add_argument('-num_peers', type=int, help='Number of peers in the network', required=True)

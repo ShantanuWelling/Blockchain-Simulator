@@ -86,6 +86,9 @@ class BlockChainNode:
         self.parent = parent
         self.height = self.parent.height + 1 if self.parent else 0
         self.balance_map: Dict[int, int] = {}
+        self.miner_id: int = -1
+        if block.transactions:
+            self.miner_id = block.transactions[0].receiver
         ## update balance map
         if self.parent:
             self.balance_map = self.parent.balance_map.copy()
@@ -185,7 +188,15 @@ class BlockchainTree:
                     self.height = new_node.height
                     self.longest_chain_leaf = new_node
 
-        
+    def number_of_peer_blocks(self, peer_id: int) -> int:
+        curr_node = self.longest_chain_leaf
+        number_of_blocks: int = 0
+        while curr_node:
+            if curr_node.miner_id == peer_id:
+                number_of_blocks += 1
+            curr_node = curr_node.parent
+        return number_of_blocks
+             
             
     
 
