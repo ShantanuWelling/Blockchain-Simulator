@@ -364,7 +364,8 @@ class P2PNetwork:
             self.forward_packet(receiver, block, event.timestamp, event.sender)
         if return_code == 1:
             ## new longest chain formed, re-start mining on the same
-            receiver.start_mining(event.timestamp, hashing_power, self.I)
+            event = receiver.start_mining(event.timestamp, hashing_power, self.I)
+            self.event_queue.add_event(event)
             
     def write_balances(self, file_name: str):
         for peer in self.peers:
