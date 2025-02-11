@@ -47,7 +47,7 @@ class Transaction:
         return self.tx_id == other.tx_id
     
     def __hash__(self):
-        return hash(self.tx_id)
+        return hash(str(self.tx_id) + self.__str__())
     
     def __lt__(self, other: "Transaction"):
         return self.timestamp < other.timestamp
@@ -148,21 +148,29 @@ class BlockchainTree:
     def chain_transactions(self, node: BlockChainNode) -> Set[Transaction]:
         ## Returns the set of transactions in the chain ending at the given node
         ## Used in validating a new node added at any point in the tree
-        if node.parent == self.longest_chain_leaf:
-            return self.longest_chain_txs.union(set(node.block.transactions))
-        txs_to_add, txs_to_remove = self.lca_branch_txs(node)
-        ## the tx set is built efficiently by avoiding the chain up to the LCA in the longest chain
-        return self.longest_chain_txs.union(txs_to_add).difference(txs_to_remove)
+        # if node.parent == self.longest_chain_leaf:
+        #     return self.longest_chain_txs.union(set(node.block.transactions))
+        # txs_to_add, txs_to_remove = self.lca_branch_txs(node)
+        # ## the tx set is built efficiently by avoiding the chain up to the LCA in the longest chain
+        # return self.longest_chain_txs.union(txs_to_add).difference(txs_to_remove)
+        transactions = set()
+        curr_node = node
+        while curr_node:
+            transactions.union(set(curr_node.block.transactions))
+            curr_node = curr_node.parent
+        return transactions
     
     def add(self, block: Block, timestamp) -> Block:
         ## Adds a new block to the tree, or to the buffer if the parent is not a part of it yet
         self.buffer.append(block)
         prev_buffer_len = -1
+        print(len(self.buffer))
 
         while len(self.buffer) != prev_buffer_len:
             prev_buffer_len = len(self.buffer)
             for block in self.buffer:
                 if block.parent_block_id not in self.nodes:
+                    # print("b1")
                     continue
 
                 parent_node = self.nodes[block.parent_block_id]
@@ -170,16 +178,23 @@ class BlockchainTree:
                 ## check that the block was created after the parent block
                 if block.create_timestamp < parent_node.block.create_timestamp:
                     self.buffer.remove(block)
+                    print("b2")
                     continue
                 ## check that the transactions in the block are consistent with the chain it is being added to
                 valid_block = validate(block.transactions, parent_node.balance_map)
                 if not valid_block:
                     self.buffer.remove(block)
+                    print("b3")
                     continue
                 ## check that the block contains no transaction already a part of the chain
                 chain_transactions = self.chain_transactions(parent_node)
-                if chain_transactions.intersection(set(block.transactions)):
+                temp = chain_transactions.intersection(set(block.transactions))
+                if temp:
+                    for x in temp:
+                        print(str(x))
+                    input()
                     self.buffer.remove(block)
+                    print("b4")
                     continue
 
                 new_node = BlockChainNode(block, parent_node, timestamp)

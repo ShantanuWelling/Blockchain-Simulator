@@ -122,7 +122,7 @@ class Peer:
         ## remove those in the new branch from LCA onwards
         old_branch_tx_set, new_branch_tx_set = self.blockchain_tree.lca_branch_txs(old_parent_node)
         mempool_set = set(self.mem_pool)
-        mempool_set = mempool_set.difference(new_branch_tx_set).union(old_branch_tx_set)
+        mempool_set = mempool_set.union(old_branch_tx_set).difference(new_branch_tx_set)
         self.mem_pool = list(mempool_set)
         return 1
     
@@ -228,7 +228,9 @@ class P2PNetwork:
             gen_tx_event = sender.generate_transaction(0, self.peers)
             self.event_queue.add_event(gen_tx_event)
             ## add receive transaction events for neighbours
-            self.forward_packet(sender, gen_tx_event.data, gen_tx_event.timestamp, i)
+            if gen_tx_event.data.amount != 0:
+                ## make sure transaction is not a dummy
+                self.forward_packet(sender, gen_tx_event.data, gen_tx_event.timestamp, i)
             hashing_power = self.low_hashing_power if sender.is_low_cpu else self.high_hashing_power
             end_mining_event = sender.start_mining(0, hashing_power, self.I)
             self.event_queue.add_event(end_mining_event)
@@ -280,7 +282,7 @@ class P2PNetwork:
                     link_speed = 100 if not (peer.is_slow or neighbor.is_slow) else 5  # 100 Mbps or 5 Mbps
                     self.latencies[(peer.peer_id, neighbor.peer_id)] = {
                         "rho": rho / 1000,  # Convert to seconds
-                        "c": link_speed,
+                        "c": link_speed/8,
                     }
                     self.latencies[(neighbor.peer_id, peer.peer_id)] = self.latencies[(peer.peer_id, neighbor.peer_id)]
     
@@ -340,7 +342,7 @@ class P2PNetwork:
         peer = self.peers[id]
         gen_tx_event = peer.generate_transaction(timestamp, self.peers)
         self.event_queue.add_event(gen_tx_event) ## add to event queue to recursively generate next transaction
-        if event.data.amount != 0:
+        if gen_tx_event.data.amount != 0:
             ## make sure transaction is not a dummy
             self.forward_packet(peer, gen_tx_event.data, gen_tx_event.timestamp, id)
 
