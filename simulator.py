@@ -1,5 +1,6 @@
 import random
 import argparse
+import time
 import uuid
 import os
 from blockchain_lib import *
@@ -10,7 +11,12 @@ from matplotlib import pyplot as plt
 ## global constants
 TX_SIZE = 1/1000  # 1 KB (in MB)
 COINBASE_REWARD = 50  # 50 coins
-
+GEN_TX_TIME = 0
+RX_TX_TIME = 0
+GEN_BLK_TIME = 0
+RX_BLK_TIME = 0
+IO_TIME = 0
+INIT_TIME = 0
 random.seed(42)
 
 
@@ -296,17 +302,23 @@ class P2PNetwork:
 
     def process_events(self, output_dir: str, stopping_height: int, suppress_output: bool):
         ## process the queue
+        global GEN_BLK_TIME, GEN_TX_TIME, RX_TX_TIME, RX_BLK_TIME, IO_TIME
         while self.continue_simulation:
             while self.event_queue.queue:
                 event = self.event_queue.pop_event()
+                start_ = time.time()
                 if event.event_type == EventType.GENERATE_TRANSACTION:
                     self.process_generate_transaction(event)
+                    GEN_TX_TIME += time.time() - start_
                 elif event.event_type == EventType.RECEIVE_TRANSACTION:
                     self.process_receive_transaction(event)
+                    RX_TX_TIME += time.time() - start_
                 elif event.event_type == EventType.END_MINING:
                     self.process_end_mining(event)
+                    GEN_BLK_TIME += time.time() - start_
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
+                    RX_BLK_TIME += time.time() - start_
                 ## Stopping criterion
                 # check if all peers have reached stopping_height
                 if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
@@ -425,21 +437,33 @@ if __name__ == "__main__":
     parser.add_argument('-interarrival_time', type=float, help='Mean interarrival time of transactions', required=True)
     parser.add_argument('-I', type=float, help='Block mining time', required=True)
     parser.add_argument('-stopping_height', type=int, help='Simulation stopping criterion', default=10)
-    parser.add_argument('-v', type=bool, help='Verbose, logs, plots', default=True)
-    args = parser.parse_args()
+    parser.add_argument('-suppress_output', dest='suppress_output', help='Verbose, logs, plots', action='store_true')
+    parser.set_defaults(suppress_output=False)
+    
+    start_ = time.time()
 
+    args = parser.parse_args()
     num_peers = args.num_peers
     frac_slow = args.frac_slow
     frac_low_cpu = args.frac_low_cpu
     interarrival_time = args.interarrival_time
     stopping_height = args.stopping_height
-    suppress_output = not args.v
+    suppress_output = args.suppress_output
     I = args.I
     output_dir = f"results_{num_peers}_{int(100*frac_slow)}_{int(100*frac_low_cpu)}_{int(interarrival_time)}_{int(I)}"
     os.makedirs(output_dir, exist_ok = True)
-    
     network = P2PNetwork(num_peers, frac_slow, frac_low_cpu, interarrival_time, I)
+
+    INIT_TIME = time.time() - start_
+
     network.process_events(output_dir = output_dir, stopping_height = stopping_height, suppress_output = suppress_output)
+    print(f'''
+          GEN_TX_TIME = {GEN_TX_TIME}s
+          RX_TX_TIME = {RX_TX_TIME}s
+          GEN_BLK_TIME = {GEN_BLK_TIME}s
+          RX_BLK_TIME = {RX_BLK_TIME}s
+          IO_TIME = {IO_TIME}s
+          INIT_TIME = {INIT_TIME}s''')
 
 
         
