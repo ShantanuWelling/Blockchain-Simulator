@@ -1,5 +1,5 @@
 Node can fake transaction sender and mine that transaction
-
+                ## TODO: need to remove blocks from the buffer that are children of an invalid block
 Report
 Experiments
 

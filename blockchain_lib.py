@@ -174,7 +174,6 @@ class BlockchainTree:
                     continue
 
                 parent_node = self.nodes[block.parent_block_id]
-                ## TODO: need to remove blocks from the buffer that are children of an invalid block
                 ## check that the block was created after the parent block
                 if block.create_timestamp < parent_node.block.create_timestamp:
                     self.buffer.remove(block)
