@@ -108,8 +108,10 @@ class BlockChainNode:
         else:
             self.balance_map = defaultdict(int)
 
-        def __eq__(node1: "BlockChainNode", node2: "BlockChainNode") -> bool:
-            return node1.block.block_id == node2.block.block_id
+    def __eq__(node1: "BlockChainNode", node2: "BlockChainNode") -> bool:
+        if not isinstance(node1, BlockChainNode) or not isinstance(node2, BlockChainNode):
+            return False
+        return node1.block.block_id == node2.block.block_id
 
 class BlockchainTree:
     def __init__(self):
@@ -164,13 +166,11 @@ class BlockchainTree:
         ## Adds a new block to the tree, or to the buffer if the parent is not a part of it yet
         self.buffer.append(block)
         prev_buffer_len = -1
-        print(len(self.buffer))
 
         while len(self.buffer) != prev_buffer_len:
             prev_buffer_len = len(self.buffer)
             for block in self.buffer:
                 if block.parent_block_id not in self.nodes:
-                    # print("b1")
                     continue
 
                 parent_node = self.nodes[block.parent_block_id]
@@ -178,23 +178,16 @@ class BlockchainTree:
                 ## check that the block was created after the parent block
                 if block.create_timestamp < parent_node.block.create_timestamp:
                     self.buffer.remove(block)
-                    print("b2")
                     continue
                 ## check that the transactions in the block are consistent with the chain it is being added to
                 valid_block = validate(block.transactions, parent_node.balance_map)
                 if not valid_block:
                     self.buffer.remove(block)
-                    print("b3")
                     continue
                 ## check that the block contains no transaction already a part of the chain
                 chain_transactions = self.chain_transactions(parent_node)
-                temp = chain_transactions.intersection(set(block.transactions))
-                if temp:
-                    for x in temp:
-                        print(str(x))
-                    input()
+                if chain_transactions.intersection(set(block.transactions)):
                     self.buffer.remove(block)
-                    print("b4")
                     continue
 
                 new_node = BlockChainNode(block, parent_node, timestamp)
@@ -204,7 +197,7 @@ class BlockchainTree:
 
                 longest_chain_timestamp = self.longest_chain_leaf.block.create_timestamp
                 ## switch the longest chain leaf to the new_node 
-                if new_node.height > self.height or new_node.height == self.height and longest_chain_timestamp > block.create_timestamp:
+                if new_node.height > self.height or (new_node.height == self.height and longest_chain_timestamp > block.create_timestamp):
                     self.longest_chain_txs = self.chain_transactions(new_node)
                     self.height = new_node.height
                     self.longest_chain_leaf = new_node
