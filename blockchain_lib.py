@@ -13,20 +13,22 @@ COINBASE_REWARD = 50  # 50 coins
 
 def validate(transactions: List["Transaction"], balances: Dict[int, int]) -> bool:
     ## Validates a list of transaction given a balance map of the peers
-        balance_map = balances.copy()
-        for tx in sorted(transactions):
-            ## sorting done according to the transaction timestamps
-            if tx.sender == None:
-                ## check coinbase transaction amount
-                if tx.amount != 50:
-                    return False
-            else:
-                ## insufficient sender balance for the transaction       
-                if balance_map[tx.sender] < tx.amount:
-                    return False
-                balance_map[tx.sender] -= tx.amount
-            balance_map[tx.receiver] += tx.amount
-        return True
+    if len(transactions) > 1000:
+        return False
+    balance_map = balances.copy()
+    for tx in sorted(transactions):
+        ## sorting done according to the transaction timestamps
+        if tx.sender == None:
+            ## check coinbase transaction amount
+            if tx.amount != 50:
+                return False
+        else:
+            ## insufficient sender balance for the transaction       
+            if balance_map[tx.sender] < tx.amount:
+                return False
+            balance_map[tx.sender] -= tx.amount
+        balance_map[tx.receiver] += tx.amount
+    return True
 
 class Transaction:
     def __init__(self, tx_id, sender: int, receiver: int, amount: int, timestamp):
@@ -177,16 +179,19 @@ class BlockchainTree:
                 ## check that the block was created after the parent block
                 if block.create_timestamp < parent_node.block.create_timestamp:
                     self.buffer.remove(block)
+                    print("b2")
                     continue
                 ## check that the transactions in the block are consistent with the chain it is being added to
                 valid_block = validate(block.transactions, parent_node.balance_map)
                 if not valid_block:
                     self.buffer.remove(block)
+                    print("b3")
                     continue
                 ## check that the block contains no transaction already a part of the chain
                 chain_transactions = self.chain_transactions(parent_node)
                 if chain_transactions.intersection(set(block.transactions)):
                     self.buffer.remove(block)
+                    print("b4")
                     continue
 
                 new_node = BlockChainNode(block, parent_node, timestamp)
