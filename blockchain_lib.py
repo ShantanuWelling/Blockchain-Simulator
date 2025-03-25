@@ -8,6 +8,9 @@ class EventType(Enum):
     RECEIVE_TRANSACTION = auto()
     END_MINING = auto()
     RECEIVE_BLOCK = auto()
+    RECEIVE_HASH = auto()
+    REQUEST_BLOCK = auto()
+    TIMEOUT = auto()
     
 COINBASE_REWARD = 50  # 50 coins
 
@@ -85,6 +88,7 @@ class Block:
         self.transactions = transactions
         self.create_timestamp = timestamp
         self.parent_block_id = parent_block_id
+        self.hash = hash(str(self.block_id) + str(self.create_timestamp) + str(self.parent_block_id))
 
 class BlockChainNode:
     ## Wrapper class around a block with information required to maintain the tree for each peer

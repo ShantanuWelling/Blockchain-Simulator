@@ -15,7 +15,7 @@ random.seed(42)
 
 
 class Peer:
-    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float):
+    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, malicious: bool):
         self.peer_id = peer_id
         self.balance = balance ## maintained according to the longest chain + block being mined
         self.is_slow = is_slow
@@ -30,6 +30,9 @@ class Peer:
         ## block being mined currently
         self.block_being_mined = None
         self.blocks_mined: int = 0
+        self.malicious = malicious
+        self.hashes_seen: Set[int] = set()
+        self.pending_blocks: Dict[int, list[int]] = defaultdict(list)
 
     def generate_transaction(self, timestamp, peers: List["Peer"]) -> Event:
         ## Generates a transaction and returns an event to process the same after an exponential delay
@@ -198,7 +201,7 @@ class Peer:
 
 
 class P2PNetwork:
-    def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float): ## z0 is frac_slow, z1 is frac_low_cpu
+    def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float, frac_malicious: float): ## z0 is frac_slow, z1 is frac_low_cpu
         self.peers: List[Peer] = []
         self.num_peers = num_peers
         self.frac_slow = frac_slow
@@ -209,6 +212,7 @@ class P2PNetwork:
         self.interarrival_time = interarrival_time
         self.latencies = {}
         self.continue_simulation = True
+        self.frac_malicious = frac_malicious
         self.create_peers()
         self.connect_peers()
         self.initialize_latencies()
@@ -234,7 +238,8 @@ class P2PNetwork:
             init_balance = 0
             is_slow = random.random() < self.frac_slow
             is_low_cpu = random.random() < self.frac_low_cpu
-            peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time)
+            is_malicous = random.random() < self.frac_malicious
+            peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, is_malicous)
             self.peers.append(peer)
 
     def connect_peers(self):
@@ -280,7 +285,7 @@ class P2PNetwork:
                     }
                     self.latencies[(neighbor.peer_id, peer.peer_id)] = self.latencies[(peer.peer_id, neighbor.peer_id)]
     
-    def forward_packet(self, peer: Peer, data: Union[Transaction, Block], timestamp, sender_id: int):
+    def forward_packet(self, peer: Peer, data: Union[Transaction, Block, int], timestamp, sender_id: int):
         ## loopless forwarding with random latency for packets (transactions, blocks)
         for neighbour in peer.neighbours:
             if neighbour.peer_id == sender_id:
@@ -289,10 +294,18 @@ class P2PNetwork:
             rho = latencies["rho"]
             c = latencies["c"]
             d = random.expovariate((12/1024) / c)
-            message_size = 1 if isinstance(data, Transaction) else len(data.transactions) ## number of KBs
+            if isinstance(data, Transaction):
+                message_size = 1
+                event_type = EventType.RECEIVE_TRANSACTION
+            elif isinstance(data, int):
+                message_size = 1/32
+                event_type = EventType.RECEIVE_HASH
+            else:
+                message_size = len(data.transactions)
+                event_type = EventType.RECEIVE_BLOCK
+            ## number of KBs
             receiver_delay = rho + message_size * TX_SIZE / c + d
             ## make the neighbour receive the packet with random delay
-            event_type = EventType.RECEIVE_TRANSACTION if isinstance(data, Transaction) else EventType.RECEIVE_BLOCK
             event = Event(timestamp + receiver_delay, event_type, data, peer.peer_id, neighbour.peer_id)
             self.event_queue.add_event(event)
 
@@ -319,6 +332,8 @@ class P2PNetwork:
                     self.process_end_mining(event)
                 elif event.event_type == EventType.RECEIVE_BLOCK:
                     self.process_receive_block(event)
+                elif event.event_type == EventType.RECEIVE_HASH:
+                    self.process_receive_hash(event)
                 continue
                 if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
                     self.write_balances(f"{output_dir}/balances.txt")
@@ -361,7 +376,7 @@ class P2PNetwork:
             return
         ## mine the block, and forward to neighbours
         peer.mine(block, event.timestamp) 
-        self.forward_packet(peer, block, event.timestamp, id)
+        self.forward_packet(peer, block.hash, event.timestamp, id)
         ## start mining all over again
         end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
         self.event_queue.add_event(end_mining_event)
@@ -377,6 +392,26 @@ class P2PNetwork:
             ## new longest chain formed, re-start mining on the same
             event = receiver.start_mining(event.timestamp, hashing_power, self.I)
             self.event_queue.add_event(event)
+    
+    def process_receive_hash(self, event: Event):
+        receiver = self.peers[event.receiver]
+        hash = event.data
+        if hash not in receiver.hashes_seen:
+            receiver.hashes_seen.add(hash)
+            receiver.pending_blocks[hash].append(event.sender)
+            ###Request
+            #self.event_queue.add_event(request)
+            #self.event_queue.add_event(timeout)
+        else:
+            if receiver.pending_blocks[hash]:
+                receiver.pending_blocks[hash].append(event.sender)
+            else:
+                receiver.pending_blocks[hash].append(event.sender)
+                ###Request
+                #self.event_queue.add_event(request)
+                #self.event_queue.add_event(timeout)
+        pass
+    
             
     def write_balances(self, file_name: str):
         for peer in self.peers:
