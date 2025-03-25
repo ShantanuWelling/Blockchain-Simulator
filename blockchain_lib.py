@@ -9,7 +9,7 @@ class EventType(Enum):
     END_MINING = auto()
     RECEIVE_BLOCK = auto()
     RECEIVE_HASH = auto()
-    REQUEST_BLOCK = auto()
+    BLOCK_REQUEST = auto()
     TIMEOUT = auto()
     
 COINBASE_REWARD = 50  # 50 coins
@@ -59,7 +59,7 @@ class Transaction:
     
 
 class Event:
-    def __init__(self, timestamp, event_type: EventType, data: Union[Transaction, 'Block'], sender: int, receiver: int):
+    def __init__(self, timestamp, event_type: EventType, data: Union[Transaction, 'Block', dict], sender: int, receiver: int):
         self.timestamp = timestamp
         self.event_type = event_type
         self.data = data

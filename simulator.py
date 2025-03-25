@@ -8,14 +8,14 @@ from typing import Set, Union, Dict, List
 import networkx as nx
 from matplotlib import pyplot as plt
 
-## global constants
+## global constants 
 TX_SIZE = 1/1000  # 1 KB (in MB)
 COINBASE_REWARD = 50  # 50 coins
 random.seed(42)
 
 
 class Peer:
-    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, malicious: bool):
+    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, malicious: bool, timeout: int):
         self.peer_id = peer_id
         self.balance = balance ## maintained according to the longest chain + block being mined
         self.is_slow = is_slow
@@ -25,12 +25,14 @@ class Peer:
         self.neighbours: List[Peer] = []
         ## for loopless forwarding
         self.transactions_seen: Set[uuid.UUID] = set()
-        self.blocks_seen: Set[uuid.UUID] = set()
+        # self.blocks_seen: Set[uuid.UUID] = set()
+        self.blocks_seen: Dict[int, Block] = defaultdict(list)
         self.blockchain_tree = BlockchainTree()
         ## block being mined currently
         self.block_being_mined = None
         self.blocks_mined: int = 0
         self.malicious = malicious
+        self.timeout = timeout
         self.hashes_seen: Set[int] = set()
         self.pending_blocks: Dict[int, list[int]] = defaultdict(list)
 
@@ -69,7 +71,8 @@ class Peer:
     def mine(self, block: Block, timestamp):
         self.blockchain_tree.add(block, timestamp)
         self.block_being_mined = None
-        self.blocks_seen.add(block.block_id)
+        # self.blocks_seen.add(block.block_id)
+        self.blocks_seen[block.hash] = block
         ## remove block txs from mempool
         self.mem_pool = list(set(self.mem_pool).difference(set(block.transactions)))
         self.blocks_mined = self.blocks_mined + 1
@@ -101,10 +104,10 @@ class Peer:
         ## -1: already seen block, no forwarding
         ## 1: longest chain switches terminate and re-start mining, forward block
         ## 0: keep mining current block, forward block
-        if block.block_id in self.blocks_seen:
+        if block.hash in self.blocks_seen:
             return -1
         self.blockchain_tree.add(block, timestamp)
-        self.blocks_seen.add(block.block_id)
+        self.blocks_seen[block.hash] = block
         longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
         if longest_chain_leaf.block.block_id == self.block_being_mined.parent_block_id:
             ## longest chain maintained
@@ -123,6 +126,32 @@ class Peer:
         self.mem_pool = list(mempool_set)
         return 1
     
+    def receive_hash(self, hash: int, sender: int, timestamp: int) -> list[Event]:
+        if hash not in self.hashes_seen:
+            self.hashes_seen.add(hash)
+            self.pending_blocks[hash].append(sender)
+            ## Get Request Event to the hash sender + Timeout Event
+            request = Event(timestamp, EventType.BLOCK_REQUEST, {"Hash": hash}, self.peer_id, sender)
+            timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, {"Hash": hash}, self.peer_id, None)
+            return (request, timeout)
+        else:
+            if self.pending_blocks[hash]:
+                self.pending_blocks[hash].append(sender)
+            else:
+                self.pending_blocks[hash].append(sender)
+                ## Get Request Event to the hash sender + Timeout Event
+                request = Event(timestamp, EventType.BLOCK_REQUEST, {"Hash": hash}, self.peer_id, sender)
+                timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, {"Hash": hash}, self.peer_id, None)
+                return (request, timeout)
+    
+    def receive_request(self, hash: int, sender: int, timestamp: int):
+        ## Honest node 
+        if not self.malicious:
+            ## Block for the hash guaranteed to be seen
+            return self.blocks_seen[hash]
+            
+
+
     def get_ratio(self) -> float:
         ## Ratio of the number of peer's blocks in the chain to total mined
         my_blocks_in_longest_chain = self.blockchain_tree.number_of_peer_blocks(self.peer_id)
@@ -201,7 +230,7 @@ class Peer:
 
 
 class P2PNetwork:
-    def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float, frac_malicious: float): ## z0 is frac_slow, z1 is frac_low_cpu
+    def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float, frac_malicious: float, timeout: int): ## z0 is frac_slow, z1 is frac_low_cpu
         self.peers: List[Peer] = []
         self.num_peers = num_peers
         self.frac_slow = frac_slow
@@ -213,6 +242,7 @@ class P2PNetwork:
         self.latencies = {}
         self.continue_simulation = True
         self.frac_malicious = frac_malicious
+        self.timeout = timeout
         self.create_peers()
         self.connect_peers()
         self.initialize_latencies()
@@ -239,7 +269,7 @@ class P2PNetwork:
             is_slow = random.random() < self.frac_slow
             is_low_cpu = random.random() < self.frac_low_cpu
             is_malicous = random.random() < self.frac_malicious
-            peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, is_malicous)
+            peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, is_malicous, self.timeout)
             self.peers.append(peer)
 
     def connect_peers(self):
@@ -298,7 +328,7 @@ class P2PNetwork:
                 message_size = 1
                 event_type = EventType.RECEIVE_TRANSACTION
             elif isinstance(data, int):
-                message_size = 1/32
+                message_size = 1/16 ## Hash size is 64B = 64/1024 KB
                 event_type = EventType.RECEIVE_HASH
             else:
                 message_size = len(data.transactions)
@@ -334,6 +364,8 @@ class P2PNetwork:
                     self.process_receive_block(event)
                 elif event.event_type == EventType.RECEIVE_HASH:
                     self.process_receive_hash(event)
+                elif event.event_type == EventType.BLOCK_REQUEST:
+                    self.process_receive_request(event)
                 continue
                 if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
                     self.write_balances(f"{output_dir}/balances.txt")
@@ -396,21 +428,18 @@ class P2PNetwork:
     def process_receive_hash(self, event: Event):
         receiver = self.peers[event.receiver]
         hash = event.data
-        if hash not in receiver.hashes_seen:
-            receiver.hashes_seen.add(hash)
-            receiver.pending_blocks[hash].append(event.sender)
-            ###Request
-            #self.event_queue.add_event(request)
-            #self.event_queue.add_event(timeout)
-        else:
-            if receiver.pending_blocks[hash]:
-                receiver.pending_blocks[hash].append(event.sender)
-            else:
-                receiver.pending_blocks[hash].append(event.sender)
-                ###Request
-                #self.event_queue.add_event(request)
-                #self.event_queue.add_event(timeout)
+        events = receiver.receive_hash(hash, event.sender, event.timestamp)
+        for event_ in events:
+            self.event_queue.add_event(event_)
         pass
+
+    def process_receive_request(self, event: Event):
+        ## The event's receiver is going to process the request
+        receiver = self.peers[event.receiver]
+        hash = event.data
+        block = receiver.receive_request(hash, event.sender, event.timestamp)
+        if block:
+            self.forward_packet()
     
             
     def write_balances(self, file_name: str):
@@ -473,6 +502,8 @@ if __name__ == "__main__":
     parser.add_argument('-stopping_height', type=int, help='Simulation stopping criterion', default=10)
     parser.add_argument('-suppress_output', dest='suppress_output', help='Verbose, logs, plots', action='store_true')
     parser.add_argument('-stopping_time', type=int, help='Simulation stopping criterion', default=17000)
+    parser.add_argument('-frac_malicious', type=float, help='Fraction of Malicious nodes', default=0.2)
+    parser.add_argument('-timeout', type=int, help='Timeout for Get Requests for blocks', default=10)
     parser.set_defaults(suppress_output=False)
     
 
@@ -484,10 +515,12 @@ if __name__ == "__main__":
     stopping_height = args.stopping_height
     suppress_output = args.suppress_output
     stopping_time = args.stopping_time
+    frac_malicious = args.frac_malicious
+    timeout = args.timeout
     I = args.I
     output_dir = f"results_{num_peers}_{int(100*frac_slow)}_{int(100*frac_low_cpu)}_{int(interarrival_time)}_{int(I)}"
     os.makedirs(output_dir, exist_ok = True)
-    network = P2PNetwork(num_peers, frac_slow, frac_low_cpu, interarrival_time, I)
+    network = P2PNetwork(num_peers, frac_slow, frac_low_cpu, interarrival_time, I, frac_malicious, timeout)
 
     network.process_events(output_dir = output_dir, stopping_height = stopping_height, suppress_output = suppress_output, stopping_time = stopping_time)
 
