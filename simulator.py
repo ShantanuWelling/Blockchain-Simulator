@@ -159,8 +159,10 @@ class Peer:
     def process_timeout(self, hash: int, timestamp: int):
         if not self.pending_blocks[hash]:
             return ()
+        # if not self.blocks_seen[hash]:
+        #     print(f"Timeout for peer {self.peer_id} for hash {hash} by {self.pending_blocks[hash][0]}.")
         self.pending_blocks[hash].pop(0)
-
+        
         if self.pending_blocks[hash]:
             provider = self.pending_blocks[hash][0]
             request = Event(timestamp, EventType.SEND_REQUEST, hash, self.peer_id, provider)
@@ -287,8 +289,8 @@ class P2PNetwork:
             init_balance = 0
             is_slow = random.random() < self.frac_slow
             is_low_cpu = random.random() < self.frac_low_cpu
-            is_malicous = random.random() < self.frac_malicious
-            peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, is_malicous, self.timeout)
+            is_malicious = random.random() < self.frac_malicious
+            peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, is_malicious, self.timeout)
             self.peers.append(peer)
 
     def connect_peers(self):
