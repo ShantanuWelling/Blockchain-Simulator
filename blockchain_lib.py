@@ -60,12 +60,13 @@ class Transaction:
     
 
 class Event:
-    def __init__(self, timestamp, event_type: EventType, data: Union[Transaction, 'Block', dict], sender: int, receiver: int):
+    def __init__(self, timestamp, event_type: EventType, data: Union[Transaction, 'Block', dict], sender: int, receiver: int, overlay: bool = False):
         self.timestamp = timestamp
         self.event_type = event_type
         self.data = data
         self.sender = sender
         self.receiver = receiver
+        self.overlay = overlay
     
     def __lt__(self, other: "Event"):
         return self.timestamp < other.timestamp
