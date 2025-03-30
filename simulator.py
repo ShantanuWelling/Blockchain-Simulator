@@ -105,14 +105,13 @@ class Peer:
         ## check if before timeout
         if not self.pending_blocks[block.hash] or self.pending_blocks[block.hash][0] != sender_id:
             return -1
+        if block.hash in self.blocks_seen:
+            return -1
         self.pending_blocks.pop(block.hash)
         self.blocks_seen[block.hash] = block
         ## -1: already seen block, no forwarding
         ## 1: longest chain switches terminate and re-start mining, forward block
         ## 0: keep mining current block, forward block
-        if block.hash in self.blocks_seen: ##SW
-            print("here")
-            return -1
         self.blockchain_tree.add(block, timestamp)
         longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
         if longest_chain_leaf.block.block_id == self.block_being_mined.parent_block_id:
@@ -138,32 +137,36 @@ class Peer:
             self.pending_blocks[hash].append(sender)
             ## Get Request Event to the hash sender + Timeout Event
             request = Event(timestamp, EventType.SEND_REQUEST, hash, self.peer_id, sender)
-            timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, sender)
+            timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, None)
             return (request, timeout)
         else:
             if self.pending_blocks[hash]:
                 self.pending_blocks[hash].append(sender)
+                return ()
             else:
                 self.pending_blocks[hash].append(sender)
                 ## Get Request Event to the hash sender + Timeout Event
                 request = Event(timestamp, EventType.SEND_REQUEST, hash, self.peer_id, sender)
-                timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, sender)
+                timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, None)
                 return (request, timeout)
-    
+
     def receive_request(self, hash: int, sender: int, timestamp: int):
         ## Honest node 
         if not self.malicious:
             ## Block for the hash guaranteed to be seen
             return self.blocks_seen[hash]
         
-    def process_timeout(self, hash: int, sender: int, timestamp: int):
-        assert self.pending_blocks[hash]
+    def process_timeout(self, hash: int, timestamp: int):
+        if not self.pending_blocks[hash]:
+            return ()
         self.pending_blocks[hash].pop(0)
 
         if self.pending_blocks[hash]:
-            request = Event(timestamp, EventType.SEND_REQUEST, hash, self.peer_id, sender)
-            timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, sender)
+            provider = self.pending_blocks[hash][0]
+            request = Event(timestamp, EventType.SEND_REQUEST, hash, self.peer_id, provider)
+            timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, None)
             return (request, timeout)
+        return ()
                         
 
 
@@ -356,7 +359,7 @@ class P2PNetwork:
             self.event_queue.add_event(event)
 
     def forward_packet_single(self, sender: Peer, data: Union[Transaction, Block, int], timestamp, receiver_id: int, event_type):
-        assert receiver_id in sender.neighbours and receiver_id != sender.peer_id
+        assert self.peers[receiver_id] in sender.neighbours and receiver_id != sender.peer_id
         latencies = self.latencies[(sender.peer_id, receiver_id)]
         rho = latencies["rho"]
         c = latencies["c"]
@@ -490,9 +493,8 @@ class P2PNetwork:
     
     def process_timeout(self, event: Event):
         requester = self.peers[event.sender]
-        provider = self.peers[event.receiver]
         hash = event.data
-        events = requester.process_timeout(hash, provider, event.timestamp)
+        events = requester.process_timeout(hash, event.timestamp)
         for event_ in events:
             self.event_queue.add_event(event_)
 
@@ -556,9 +558,9 @@ if __name__ == "__main__":
     parser.add_argument('-I', type=float, help='Block mining time', required=True)
     parser.add_argument('-stopping_height', type=int, help='Simulation stopping criterion', default=10)
     parser.add_argument('-suppress_output', dest='suppress_output', help='Verbose, logs, plots', action='store_true')
-    parser.add_argument('-stopping_time', type=int, help='Simulation stopping criterion', default=17000)
+    parser.add_argument('-stopping_time', type=int, help='Simulation stopping criterion', default=10000)
     parser.add_argument('-frac_malicious', type=float, help='Fraction of Malicious nodes', default=0)
-    parser.add_argument('-timeout', type=int, help='Timeout for Get Requests for blocks', default=10)
+    parser.add_argument('-timeout', type=int, help='Timeout for Get Requests for blocks', default=500)
     parser.set_defaults(suppress_output=False)
     
 
