@@ -9,7 +9,8 @@ class EventType(Enum):
     END_MINING = auto()
     RECEIVE_BLOCK = auto()
     RECEIVE_HASH = auto()
-    BLOCK_REQUEST = auto()
+    SEND_REQUEST = auto()
+    RECEIVE_REQUEST = auto()
     TIMEOUT = auto()
     
 COINBASE_REWARD = 50  # 50 coins
