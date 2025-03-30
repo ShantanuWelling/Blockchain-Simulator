@@ -482,11 +482,11 @@ class P2PNetwork:
 
     def process_receive_request(self, event: Event):
         ## The event's receiver is going to process the request
-        receiver = self.peers[event.receiver]
+        provider = self.peers[event.receiver]
         hash = event.data
-        block = receiver.receive_request(hash, event.sender, event.timestamp)
+        block = provider.receive_request(hash, event.sender, event.timestamp)
         if block:
-            self.forward_packet_single(receiver, block, event.timestamp, event.sender, EventType.RECEIVE_BLOCK)
+            self.forward_packet_single(provider, block, event.timestamp, event.sender, EventType.RECEIVE_BLOCK)
     
     def process_timeout(self, event: Event):
         requester = self.peers[event.sender]
