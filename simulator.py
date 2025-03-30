@@ -15,7 +15,7 @@ random.seed(42)
 
 
 class Peer:
-    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, malicious: bool, timeout: int):
+    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, timeout: int):
         self.peer_id = peer_id
         self.balance = balance ## maintained according to the longest chain + block being mined
         self.is_slow = is_slow
@@ -31,7 +31,7 @@ class Peer:
         ## block being mined currently
         self.block_being_mined = None
         self.blocks_mined: int = 0
-        self.malicious = malicious
+        self.malicious = False
         self.timeout = timeout
         self.hashes_seen: Set[int] = set()
         self.pending_blocks: Dict[int, list[int]] = defaultdict(list)
@@ -249,7 +249,18 @@ class Peer:
             add_node_edges_to_file(self.blockchain_tree.root, file)
 
 
+class MaliciousPeer(Peer):
+    def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, timeout: int):
+        super().__init__(peer_id, balance, is_slow, is_low_cpu, interarrival_time, timeout)
+        self.malicious : bool = True
+        self.ringleader : bool = False
+        self.pvt_tree = BlockchainTree()
+        self.malicious_nodes = List[MaliciousPeer] = []
+        self.malicious_neighbours: List[MaliciousPeer] = []
 
+    def start_mining():
+        pass
+    
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float, frac_malicious: float, timeout: int): ## z0 is frac_slow, z1 is frac_low_cpu
         self.peers: List[Peer] = []
@@ -261,12 +272,18 @@ class P2PNetwork:
         self.high_hashing_power = 10 / (num_peers * (10 - 9 * frac_low_cpu))
         self.interarrival_time = interarrival_time
         self.latencies = {}
+        self.malicious_latencies = {}
         self.continue_simulation = True
         self.frac_malicious = frac_malicious
         self.timeout = timeout
+        self.malicious_peers : List[MaliciousPeer] = []
+        self.malicious_hashing_power : float = 0
+        
         self.create_peers()
         self.connect_peers()
+        self.connect_malicious_peers()
         self.initialize_latencies()
+        self.initialize_malicious_latencies()
         self.initialize_event_queue()
 
     def initialize_event_queue(self):
@@ -280,8 +297,14 @@ class P2PNetwork:
             if gen_tx_event.data.amount != 0:
                 ## make sure transaction is not a dummy
                 self.forward_packet(sender, gen_tx_event.data, gen_tx_event.timestamp, i)
-            hashing_power = self.low_hashing_power if sender.is_low_cpu else self.high_hashing_power
-            end_mining_event = sender.start_mining(0, hashing_power, self.I)
+            
+            if not sender.malicious:
+                hashing_power = self.low_hashing_power if sender.is_low_cpu else self.high_hashing_power
+                end_mining_event = sender.start_mining(0, hashing_power, self.I)
+            elif sender.ringleader:
+                end_mining_event = sender.start_mining(0, self.malicious_hashing_power, self.I)
+            else:
+                continue
             self.event_queue.add_event(end_mining_event)
 
     def create_peers(self):
@@ -290,8 +313,19 @@ class P2PNetwork:
             is_slow = random.random() < self.frac_slow
             is_low_cpu = random.random() < self.frac_low_cpu
             is_malicious = random.random() < self.frac_malicious
-            peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, is_malicious, self.timeout)
+            if is_malicious:
+                peer = MaliciousPeer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, self.timeout)
+                self.malicious_peers.append(peer)
+            else:
+                peer = Peer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, self.timeout)
             self.peers.append(peer)
+        
+        ## choose random ringleader amongst malicious nodes
+        ringleader = random.choice(self.malicious_peers)
+        ringleader.ringleader = True
+        for peer in self.malicious_peers:
+            peer.malicious_nodes = self.malicious_peers
+            self.malicious_hashing_power += self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
 
     def connect_peers(self):
         while True:
@@ -307,6 +341,22 @@ class P2PNetwork:
                         neighbour.neighbours.append(peer)
             
             if self.check_connectivity():
+                break
+            
+    def connect_malicious_peers(self):
+        while True:
+            for peer in self.malicious_peers:
+                peer.malicious_neighbours = []
+            
+            for peer in self.malicious_peers:
+                num_connections = random.randint(3, 6)
+                while len(peer.malicious_neighbours) < num_connections:
+                    neighbour = random.choice(self.malicious_peers)
+                    if neighbour != peer and neighbour not in peer.malicious_neighbours:
+                        peer.malicious_neighbours.append(neighbour)
+                        neighbour.malicious_neighbours.append(peer)
+            
+            if self.check_malicious_connectivity():     
                 break
 
     def check_connectivity(self):
@@ -324,6 +374,21 @@ class P2PNetwork:
                     count += 1
         return count == self.num_peers
     
+    def check_malicious_connectivity(self):
+        ## does BFS to check graph connectedness
+        visited = [False] * len(self.malicious_peers)
+        stack = [0]
+        visited[0] = True
+        count = 1
+        while stack:
+            peer_id = stack.pop()
+            for neighbour in self.malicious_peers[peer_id].malicious_neighbours:
+                if not visited[neighbour.peer_id]:
+                    visited[neighbour.peer_id] = True
+                    stack.append(neighbour.peer_id)
+                    count += 1
+        return count == len(self.malicious_peers)
+    
     def initialize_latencies(self):
         for peer in self.peers:
             for neighbor in peer.neighbours:
@@ -336,6 +401,18 @@ class P2PNetwork:
                     }
                     self.latencies[(neighbor.peer_id, peer.peer_id)] = self.latencies[(peer.peer_id, neighbor.peer_id)]
     
+    def initialize_malicious_latencies(self):
+        for peer in self.malicious_peers:
+            for neighbour in peer.malicious_neighbours:
+                if (peer.peer_id, neighbour.peer_id) not in self.malicious_latencies:
+                    rho = random.uniform(1, 10)
+                    link_speed = 100 if not (peer.is_slow or neighbour.is_slow) else 5
+                    self.latencies[(peer.peer_id, neighbour.peer_id)] = {
+                        "rho": rho / 1000,
+                        "c": link_speed/8,
+                    }
+                    self.malicious_latencies[(neighbour.peer_id, peer.peer_id)] = self.malicious_latencies[(peer.peer_id, neighbour.peer_id)]        
+        
     def forward_packet(self, peer: Peer, data: Union[Transaction, Block, int], timestamp, sender_id: int):
         ## loopless forwarding with random latency for packets (transactions, blocks)
         for neighbour in peer.neighbours:
@@ -481,7 +558,7 @@ class P2PNetwork:
 
     def process_send_request(self, event: Event):
         requester = self.peers[event.sender]
-        provider = event.receiver ##SW
+        provider = event.receiver
         self.forward_packet_single(requester, event.data, event.timestamp, provider, EventType.RECEIVE_REQUEST)
         
 
