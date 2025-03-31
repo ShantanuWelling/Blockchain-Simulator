@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 TX_SIZE = 1/1000  # 1 KB (in MB)
 COINBASE_REWARD = 50  # 50 coins
 random.seed(42)
-DEBUG = 1
+DEBUG = 0
 
 class Peer:
     def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, timeout: int):
@@ -172,19 +172,21 @@ class Peer:
         my_blocks_in_longest_chain = self.blockchain_tree.number_of_peer_blocks(self.peer_id)
         return my_blocks_in_longest_chain / self.blocks_mined if self.blocks_mined != 0 else 0, my_blocks_in_longest_chain, self.blocks_mined
     
-    def visualize_tree(self, output_dir: str):
+    def visualize_tree(self, output_dir: str, ringleader_id: int):
         ## Visualization code
         G = nx.DiGraph()
         labels = {}
 
+        malicious_nodes = set()
         def add_node_edges(node: BlockChainNode):
+            if node.miner_id == ringleader_id:
+                malicious_nodes.add(node.block.block_id)
             G.add_node(node.block.block_id, height=node.height)
             receive_time = int(node.receive_timestamp) if node.receive_timestamp is not None else 0
             mine_time = int(node.block.create_timestamp) if node.block.create_timestamp is not None else 0
             labels[node.block.block_id] = f"Miner {node.miner_id}\n N-Txs : {len(node.block.transactions)}\n Mine time: {mine_time}\n Receive time: {receive_time}"
             if node.parent:
                 G.add_edge(node.parent.block.block_id, node.block.block_id)
-
             for child in node.children:
                 add_node_edges(child)
 
@@ -199,7 +201,9 @@ class Peer:
             curr_node = curr_node.parent
             
         for node in G.nodes:
-            if node in longest_chain_nodes:
+            if node in malicious_nodes:
+                node_colors.append('red')
+            elif node in longest_chain_nodes:
                 node_colors.append('lightgreen')
             else:
                 node_colors.append('skyblue')
@@ -248,13 +252,13 @@ class MaliciousPeer(Peer):
         self.malicious : bool = True
         self.ringleader : bool = False
         self.ringleader_id : int = None
-        self.blockchain_tree = MaliciousBlockchainTree(self.ringleader_id)
+        self.blockchain_tree = MaliciousBlockchainTree()
         self.malicious_nodes: List[MaliciousPeer] = []
         self.malicious_neighbours: List[MaliciousPeer] = []
         self.release_counter = 0
     
     def receive_hash(self, hash: int, sender: int, timestamp: int) -> List[Event]:
-        overlay = sender in self.malicious_neighbours
+        overlay = sender in [peer.peer_id for peer in self.malicious_neighbours]
         if hash not in self.hashes_seen:
             self.hashes_seen.add(hash)
             self.pending_blocks[hash].append(sender)
@@ -336,9 +340,49 @@ class P2PNetwork:
         self.create_peers()
         self.connect_peers()
         self.connect_malicious_peers()
+        self.print_network()
         self.initialize_latencies()
         self.initialize_malicious_latencies()
         self.initialize_event_queue()
+
+    def print_network(self):
+        ## print the network graph and malicious nodes and mark overlay and normal connections
+        G = nx.Graph()
+
+        # Add normal and malicious peers
+        for peer in self.peers:
+            G.add_node(peer.peer_id)
+        for peer in self.malicious_peers.values():
+            G.add_node(peer.peer_id)
+
+        # Add normal edges
+        normal_edges = []
+        for peer in self.peers:
+            for neighbour in peer.neighbours:
+                normal_edges.append((peer.peer_id, neighbour.peer_id))
+        
+        # Add malicious edges
+        malicious_edges = []
+        for peer in self.malicious_peers.values():
+            for neighbour in peer.malicious_neighbours:
+                malicious_edges.append((peer.peer_id, neighbour.peer_id))
+
+        pos = nx.spring_layout(G)
+
+        # Draw nodes
+        nx.draw(G, pos, with_labels=True, font_weight='bold', node_color='skyblue', node_size=500, font_size=10)
+        nx.draw_networkx_nodes(G, pos, nodelist=[peer.peer_id for peer in self.malicious_peers.values()], node_color='red', node_size=500)
+
+        # Draw normal edges in black
+        nx.draw_networkx_edges(G, pos, edgelist=normal_edges, edge_color='black')
+
+        # Draw malicious edges in red
+        nx.draw_networkx_edges(G, pos, edgelist=malicious_edges, edge_color='red', style='dashed')
+
+        plt.savefig("network.png")
+
+    
+
 
     def initialize_event_queue(self):
         ## Start transaction generation, mining for all peers
@@ -362,11 +406,15 @@ class P2PNetwork:
             self.event_queue.add_event(end_mining_event)
 
     def create_peers(self):
+        ## choose frac_malicious * num_peers indices randomly
+        malicious_indices = random.sample(range(self.num_peers), int(self.frac_malicious * self.num_peers))
+        low_cpu_indices = random.sample(range(self.num_peers), int(self.frac_low_cpu * self.num_peers))
+        slow_indices = random.sample(range(self.num_peers), int(self.frac_slow * self.num_peers))
         for i in range(self.num_peers):
             init_balance = 0
-            is_slow = random.random() < self.frac_slow
-            is_low_cpu = random.random() < self.frac_low_cpu
-            is_malicious = random.random() < self.frac_malicious
+            is_slow = i in slow_indices
+            is_low_cpu = i in low_cpu_indices
+            is_malicious = i in malicious_indices
             if is_malicious:
                 peer = MaliciousPeer(i, init_balance, is_slow, is_low_cpu, self.interarrival_time, self.timeout)
                 self.malicious_peers[peer.peer_id] = peer
@@ -380,10 +428,11 @@ class P2PNetwork:
         self.ringleader = ringleader.peer_id
         print(f"Ringleader is {ringleader.peer_id}")
         for peer in self.malicious_peers.values():
+            print("Malicious peer", peer.peer_id)
             peer.malicious_nodes = list(self.malicious_peers.values())
             peer.ringleader_id = ringleader.peer_id
             self.malicious_hashing_power += self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
-
+            peer.blockchain_tree.ringleader_id = ringleader.peer_id
     def connect_peers(self):
         while True:
             for peer in self.peers:
@@ -399,6 +448,7 @@ class P2PNetwork:
             
             if self.check_connectivity():
                 break
+
             
     def connect_malicious_peers(self):
         while True:
@@ -543,7 +593,7 @@ class P2PNetwork:
                     for peer in self.peers:
                         peer.write_to_file(f"{output_dir}/tree_peer_{peer.peer_id}.txt")
                         if not suppress_output:
-                            peer.visualize_tree(output_dir = output_dir)
+                            peer.visualize_tree(output_dir = output_dir, ringleader_id = self.ringleader)
                     print(f"Simulation time {event.timestamp} exceeded stopping time {stopping_time}. Exiting simulation...")
                     self.continue_simulation = False
                     break
@@ -612,10 +662,13 @@ class P2PNetwork:
             hashing_power = self.malicious_hashing_power
             if DEBUG:
                 print(f"Ringleader mined block {block.block_id}")
+                print(f"Block is mined by {block.get_miner_id()}")
         else:
             hashing_power = self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
         if block.block_id != peer.block_being_mined.block_id:
             ## do not mine the block if the chain has switched in the mean time
+            if DEBUG:
+                print(f"Block being mined {peer.block_being_mined.block_id}")
             return ## SW update block being mined in receive block for malicious
         ## mine the block, and forward to neighbours
         peer.mine(block, event.timestamp) 
@@ -635,7 +688,10 @@ class P2PNetwork:
         receiver = self.peers[event.receiver]
         sender_id = event.sender
         block = event.data
-        hashing_power = self.low_hashing_power if receiver.is_low_cpu else self.high_hashing_power
+        if receiver.malicious:
+            hashing_power = self.malicious_hashing_power
+        else:
+            hashing_power = self.low_hashing_power if receiver.is_low_cpu else self.high_hashing_power
 
         return_code = receiver.receive_block(block, event.timestamp, sender_id)
 
@@ -668,6 +724,8 @@ class P2PNetwork:
         requester = self.peers[event.sender]
         provider = event.receiver
         ## event.overlay == requester and provider in self.malicious_neighbours
+        if DEBUG:
+            print(f"Sender {event.sender} sending request to provider {event.receiver}, overlay {event.overlay}")
         self.forward_packet_single(requester, event.data, event.timestamp, provider, EventType.RECEIVE_REQUEST, event.overlay)
         
 
@@ -679,8 +737,13 @@ class P2PNetwork:
             if provider.blocks_seen[hash].get_miner_id() == self.ringleader: ## honest neighbour asking for malicious block
                 self.forward_packet_single(provider, provider.blocks_seen[hash], event.timestamp, event.sender, EventType.RECEIVE_BLOCK, False)
             else: ## honest neighbour asking for honest block
+                # return
+                ## to remove eclipse attack
+                self.forward_packet_single(provider, provider.blocks_seen[hash], event.timestamp, event.sender, EventType.RECEIVE_BLOCK, False)
                 return
         block = provider.receive_request(hash)
+        if DEBUG:
+            print(f"Sender {event.sender} received block from provider {event.receiver}")
         if block:
             self.forward_packet_single(provider, block, event.timestamp, event.sender, EventType.RECEIVE_BLOCK, event.overlay)
     
@@ -702,6 +765,15 @@ class P2PNetwork:
         private_chain : List[Block] = receiver.blockchain_tree.get_private_chain()
         if DEBUG:
             print(f"Length of pvt chain {len(private_chain)}")
+            # if len(private_chain) == 0:
+            # check that the miner_id of all blocks in the private chain is the ringleader
+            if len(private_chain) > 0 and not all(block.get_miner_id() == receiver.ringleader_id for block in private_chain):
+                print("Not all malicious in private chain")
+                print([block.get_miner_id() for block in private_chain])
+                for dict_ in receiver.pending_blocks.values():
+                    print(dict_)
+                receiver.visualize_tree(output_dir = "results", ringleader_id = self.ringleader)
+                exit()
         
         for block in private_chain:
             self.forward_packet(receiver, block.hash, event.timestamp, receiver.peer_id, False)

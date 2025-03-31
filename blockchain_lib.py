@@ -2,6 +2,7 @@ import heapq
 from enum import Enum, auto
 from typing import Union, Dict, List, Set
 from collections import defaultdict
+DEBUG = 0
 
 class EventType(Enum):
     GENERATE_TRANSACTION = auto()
@@ -94,6 +95,8 @@ class Block:
         self.hash = hash(str(self.block_id) + str(self.create_timestamp) + str(self.parent_block_id))
 
     def get_miner_id(self):
+        if len(self.transactions) == 0:
+            return -1
         return self.transactions[0].receiver
 
 class BlockChainNode:
@@ -228,16 +231,20 @@ class BlockchainTree:
              
             
 class MaliciousBlockchainTree(BlockchainTree):
-    def __init__(self, ringleader_id):
+    def __init__(self):
         super().__init__()
         self.private_chain_root = self.root
-        self.ringleader_id = ringleader_id
+        self.ringleader_id = None
     
     def add(self, block: Block, timestamp) -> bool:
         ## Adds a new block to the tree, or to the buffer if the parent is not a part of it yet
         self.buffer.append(block)
         prev_buffer_len = -1
         release_private_chain = False
+
+        if DEBUG:
+            if block.get_miner_id() == self.ringleader_id:
+                print("ADDING MALICIOUS BLOCK")
 
         while len(self.buffer) != prev_buffer_len:
             prev_buffer_len = len(self.buffer)
@@ -269,14 +276,18 @@ class MaliciousBlockchainTree(BlockchainTree):
                 parent_node.children.append(new_node)
                 self.buffer.remove(block)
 
-                if new_node.height == self.height - 1 or (new_node.parent == self.longest_chain_leaf.parent):
+                if (new_node.height == self.height - 1 or new_node.parent == self.longest_chain_leaf.parent) and self.longest_chain_leaf.miner_id == self.ringleader_id:
+                    if DEBUG:
+                        print(f"RELEASING PRIVATE CHAIN due to new node height = {new_node.height} and self.height = {self.height}")
                     release_private_chain = True
 
                 ## switch the longest chain leaf to the new_node
                 ## make it the private chain root if honest block
+                if new_node.miner_id == self.ringleader_id and new_node.parent.miner_id != self.ringleader_id \
+                   and new_node.height - 1 > self.private_chain_root.height:
+                    self.private_chain_root = new_node.parent
+
                 if new_node.height > self.height:
-                    if new_node.miner_id != self.ringleader_id:
-                        self.private_chain_root = new_node
                     release_private_chain = False
                     self.longest_chain_txs = self.chain_transactions(new_node)
                     self.height = new_node.height
@@ -288,7 +299,7 @@ class MaliciousBlockchainTree(BlockchainTree):
         curr_node = self.longest_chain_leaf
         private_chain = []
         while curr_node != self.private_chain_root:
-            assert curr_node.miner_id == self.ringleader_id
+            # assert curr_node.miner_id == self.ringleader_id
             private_chain.append(curr_node.block)
             curr_node = curr_node.parent
         return private_chain
