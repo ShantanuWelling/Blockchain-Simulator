@@ -249,7 +249,7 @@ class MaliciousPeer(Peer):
         self.ringleader : bool = False
         self.ringleader_id : int = None
         self.blockchain_tree = MaliciousBlockchainTree(self.ringleader_id)
-        self.malicious_nodes = List[MaliciousPeer] = []
+        self.malicious_nodes: List[MaliciousPeer] = []
         self.malicious_neighbours: List[MaliciousPeer] = []
         self.release_counter = 0
     
