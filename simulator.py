@@ -490,8 +490,8 @@ class P2PNetwork:
     def check_malicious_connectivity(self):
         ## does BFS to check graph connectedness
         visited = {peer.peer_id: False for peer in self.malicious_peers.values()}
-        stack = [0]
-        visited[0] = True
+        stack = [list(self.malicious_peers.keys())[0]]
+        visited[stack[0]] = True
         count = 1
         while stack:
             peer_id = stack.pop()
@@ -838,7 +838,31 @@ class P2PNetwork:
         for peer_data in peer_ratios:
             with open(file_name, 'a') as file:
                 file.write(peer_data + "\n")
+
+        def write_metrics(self, output_dir: str):
+            ringleader = self.peers[self.ringleader]
+            red_total_blocks = ringleader.blocks_mined
+            longest_chain = ringleader.blockchain_tree.longest_chain_leaf
+
+            ## traverse the longest chain till genesis block
+            chain = []
+            curr_node = longest_chain
+            while curr_node:
+                chain.append(curr_node)
+                curr_node = curr_node.parent
             
+            len_longest_chain = len(chain)
+            red_blocks_in_longest_chain = sum([1 for node in chain if node.miner_id == self.ringleader])
+
+            with open(f"{output_dir}/metrics.txt", 'w') as file:
+                file.write(f"Total blocks mined by ringleader: {red_total_blocks}\n")
+                file.write(f"Total blocks in longest chain: {len_longest_chain}\n")
+                file.write(f"Total red blocks in longest chain: {red_blocks_in_longest_chain}\n")
+                file.write(f"Red blocks in longest chain by longest chain length: {red_blocks_in_longest_chain / len_longest_chain}\n")
+                file.write(f"Red blocks in longest chain by total red blocks: {red_blocks_in_longest_chain / red_total_blocks}\n")
+
+                
+    
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='P2P Network Simulator')
@@ -871,4 +895,6 @@ if __name__ == "__main__":
     network = P2PNetwork(num_peers, frac_slow, frac_low_cpu, interarrival_time, I, frac_malicious, timeout)
 
     network.process_events(output_dir = output_dir, stopping_height = stopping_height, suppress_output = suppress_output, stopping_time = stopping_time)
+
+    network.write_ratios(output_dir)
 
