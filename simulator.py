@@ -109,9 +109,11 @@ class Peer:
             return -1
         self.pending_blocks.pop(block.hash)
         self.blocks_seen[block.hash] = block
+
         ## -1: already seen block, no forwarding
         ## 1: longest chain switches terminate and re-start mining, forward block
         ## 0: keep mining current block, forward block
+
         self.blockchain_tree.add(block, timestamp)
         longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
         if longest_chain_leaf.block.block_id == self.block_being_mined.parent_block_id:
@@ -151,10 +153,7 @@ class Peer:
                 return (request, timeout)
 
     def receive_request(self, hash: int):
-        ## Honest node 
-        if not self.malicious:
-            ## Block for the hash guaranteed to be seen
-            return self.blocks_seen[hash]
+        return self.blocks_seen[hash]
         
     def process_timeout(self, hash: int, timestamp: int):
         if not self.pending_blocks[hash]:
@@ -167,9 +166,6 @@ class Peer:
             timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, None)
             return (request, timeout)
         return ()
-                        
-
-
 
     def get_ratio(self) -> float:
         ## Ratio of the number of peer's blocks in the chain to total mined
@@ -246,29 +242,79 @@ class Peer:
             file.write("=" * 40 + "\n")
             add_node_edges_to_file(self.blockchain_tree.root, file)
 
-
 class MaliciousPeer(Peer):
     def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, timeout: int):
         super().__init__(peer_id, balance, is_slow, is_low_cpu, interarrival_time, timeout)
         self.malicious : bool = True
         self.ringleader : bool = False
-        self.pvt_tree = BlockchainTree()
+        self.ringleader_id : int = None
+        self.blockchain_tree = MaliciousBlockchainTree(self.ringleader_id)
         self.malicious_nodes = List[MaliciousPeer] = []
         self.malicious_neighbours: List[MaliciousPeer] = []
+        self.release_counter = 0
+    
+    def receive_hash(self, hash: int, sender: int, timestamp: int) -> List[Event]:
+        overlay = sender in self.malicious_neighbours
+        if hash not in self.hashes_seen:
+            self.hashes_seen.add(hash)
+            self.pending_blocks[hash].append(sender)
+            ## Get Request Event to the hash sender + Timeout Event
+            request = Event(timestamp, EventType.SEND_REQUEST, hash, self.peer_id, sender, overlay)
+            timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, None, overlay)
+            return (request, timeout)
+        else:
+            if self.pending_blocks[hash]:
+                self.pending_blocks[hash].append(sender)
+                return ()
+            else:
+                self.pending_blocks[hash].append(sender)
+                ## Get Request Event to the hash sender + Timeout Event
+                request = Event(timestamp, EventType.SEND_REQUEST, hash, self.peer_id, sender, overlay)
+                timeout = Event(timestamp + self.timeout, EventType.TIMEOUT, hash, self.peer_id, None, overlay)
+                return (request, timeout)
 
-    def mine(self, block: Block, timestamp):
-        self.pvt_tree.add(block, timestamp)
-        self.block_being_mined = None
+    def receive_block(self, block: Block, timestamp, sender_id: int) -> int:
+
+        ## check if before timeout
+        if not self.pending_blocks[block.hash] or self.pending_blocks[block.hash][0] != sender_id:
+            return -1
+        if block.hash in self.blocks_seen:
+            return -1
+        self.pending_blocks.pop(block.hash)
         self.blocks_seen[block.hash] = block
-        ## remove block txs from mempool
-        self.mem_pool = list(set(self.mem_pool).difference(set(block.transactions)))
-    
-    def receive_block():
-        pass
+
+        ## -1: already seen block, no forwarding
+        ## 1: longest chain switches terminate and re-start mining, forward block
+        ## 0: forward block appropriately
+        ## 2: no switching of longest chain, trigger dump of private chain
+
         
-    def receive_request():
-        pass
-    
+        release_private_chain = self.blockchain_tree.add(block, timestamp)
+
+        if not self.ringleader: # don't start mining if not ringleader
+            return 0
+        
+        if release_private_chain:
+            return 2
+
+        longest_chain_leaf = self.blockchain_tree.longest_chain_leaf
+        if longest_chain_leaf.block.block_id == self.block_being_mined.parent_block_id:
+            ## longest chain maintained
+            return 0
+
+        ## longest chain switches
+        ## update self balance
+        self.balance = longest_chain_leaf.balance_map[self.peer_id]
+        old_parent_node = self.blockchain_tree.nodes[self.block_being_mined.parent_block_id]
+        ## update mempool
+        ## add the tx set in the old branch upto the LCA
+        ## remove those in the new branch from LCA onwards
+        old_branch_tx_set, new_branch_tx_set = self.blockchain_tree.lca_branch_txs(old_parent_node)
+        mempool_set = set(self.mem_pool)
+        mempool_set = mempool_set.union(old_branch_tx_set).difference(new_branch_tx_set)
+        self.mem_pool = list(mempool_set)
+        return 1
+            
 class P2PNetwork:
     def __init__(self, num_peers: int, frac_slow: bool, frac_low_cpu: bool, interarrival_time: float, I: float, frac_malicious: float, timeout: int): ## z0 is frac_slow, z1 is frac_low_cpu
         self.peers: List[Peer] = []
@@ -331,8 +377,10 @@ class P2PNetwork:
         ## choose random ringleader amongst malicious nodes
         ringleader = random.choice(self.malicious_peers)
         ringleader.ringleader = True
+        self.ringleader = ringleader.peer_id
         for peer in self.malicious_peers:
             peer.malicious_nodes = self.malicious_peers
+            peer.ringleader_id = ringleader.peer_id
             self.malicious_hashing_power += self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
 
     def connect_peers(self):
@@ -421,13 +469,19 @@ class P2PNetwork:
                     }
                     self.malicious_latencies[(neighbour.peer_id, peer.peer_id)] = self.malicious_latencies[(peer.peer_id, neighbour.peer_id)]        
         
-    def forward_packet(self, peer: Peer, data: Union[Transaction, Block, int], timestamp, sender_id: int, overlay: bool = False):
+    def forward_packet(self, peer: Peer, data: Union[Transaction, Block, int, str], timestamp, sender_id: int, overlay: bool = False):
         ## loopless forwarding with random latency for packets (transactions, blocks)
         if overlay:
             latencies_map = self.malicious_latencies
             neighbours = peer.malicious_neighbours
+        else:
+            latencies_map = self.latencies
+            neighbours = peer.neighbours
         for neighbour in neighbours:
             if neighbour.peer_id == sender_id:
+                continue
+            ## ensuring that only overlay communication between connected malicious nodes
+            if not overlay and peer.malicious and neighbour.malicious:
                 continue
             latencies = latencies_map[(peer.peer_id, neighbour.peer_id)]
             rho = latencies["rho"]
@@ -439,6 +493,9 @@ class P2PNetwork:
             elif isinstance(data, int):
                 message_size = 1/16 ## Hash size is 64B = 64/1024 KB
                 event_type = EventType.RECEIVE_HASH
+            elif isinstance(data, str):
+                message_size = 1/16 
+                event_type = EventType.RELEASE_PRIVATE_CHAIN
             else:
                 message_size = len(data.transactions)
                 event_type = EventType.RECEIVE_BLOCK
@@ -448,9 +505,16 @@ class P2PNetwork:
             event = Event(timestamp + receiver_delay, event_type, data, peer.peer_id, neighbour.peer_id, overlay)
             self.event_queue.add_event(event)
 
-    def forward_packet_single(self, sender: Peer, data: Union[Transaction, Block, int], timestamp, receiver_id: int, event_type):
+    def forward_packet_single(self, sender: Peer, data: Union[Transaction, Block, int], timestamp, receiver_id: int, event_type, overlay: bool = False):
         assert self.peers[receiver_id] in sender.neighbours and receiver_id != sender.peer_id
-        latencies = self.latencies[(sender.peer_id, receiver_id)]
+
+        if not overlay and sender.malicious and self.peers[receiver_id].malicious:
+            return
+        
+        if overlay:
+            latencies = self.malicious_latencies[(sender.peer_id, receiver_id)]
+        else:
+            latencies = self.latencies[(sender.peer_id, receiver_id)]
         rho = latencies["rho"]
         c = latencies["c"]
         d = random.expovariate((12/1024) / c)
@@ -463,7 +527,7 @@ class P2PNetwork:
         ## number of KBs
         receiver_delay = rho + message_size * TX_SIZE / c + d
         ## make the neighbour receive the packet with random delay
-        event = Event(timestamp + receiver_delay, event_type, data, sender.peer_id, receiver_id)
+        event = Event(timestamp + receiver_delay, event_type, data, sender.peer_id, receiver_id, overlay)
         self.event_queue.add_event(event)
 
 
@@ -488,16 +552,18 @@ class P2PNetwork:
                     self.process_receive_transaction(event)
                 elif event.event_type == EventType.END_MINING:
                     self.process_end_mining(event)
-                elif event.event_type == EventType.RECEIVE_BLOCK:
-                    self.process_receive_block(event)
                 elif event.event_type == EventType.RECEIVE_HASH:
                     self.process_receive_hash(event)
                 elif event.event_type == EventType.SEND_REQUEST:
                     self.process_send_request(event)
                 elif event.event_type == EventType.RECEIVE_REQUEST:
                     self.process_receive_request(event)
+                elif event.event_type == EventType.RECEIVE_BLOCK:
+                    self.process_receive_block(event)
                 elif event.event_type == EventType.TIMEOUT:
                     self.process_timeout(event)
+                elif event.event_type == EventType.RELEASE_PRIVATE_CHAIN:
+                    self.process_release(event)
                 continue
                 if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
                     self.write_balances(f"{output_dir}/balances.txt")
@@ -521,6 +587,8 @@ class P2PNetwork:
         if gen_tx_event.data.amount != 0:
             ## make sure transaction is not a dummy
             self.forward_packet(peer, gen_tx_event.data, gen_tx_event.timestamp, id)
+            if peer.malicious:
+                self.forward_packet(peer, gen_tx_event.data, gen_tx_event.timestamp, id, True)
 
     def process_receive_transaction(self, event: Event):
         receiver = self.peers[event.receiver]
@@ -529,6 +597,8 @@ class P2PNetwork:
         if unseen_tx:
             ## forward only if new tx
             self.forward_packet(receiver, transaction, event.timestamp, event.sender)
+            if receiver.malicious:
+                self.forward_packet(receiver, transaction, event.timestamp, event.sender, True)
 
     def process_end_mining(self, event: Event):
         id = event.sender
@@ -541,13 +611,20 @@ class P2PNetwork:
             hashing_power = self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
         if block.block_id != peer.block_being_mined.block_id:
             ## do not mine the block if the chain has switched in the mean time
-            return ##SW update block being mined in receive block for malicious
+            return ## SW update block being mined in receive block for malicious
         ## mine the block, and forward to neighbours
         peer.mine(block, event.timestamp) 
         self.forward_packet(peer, block.hash, event.timestamp, id, peer.malicious)
         ## start mining all over again
         end_mining_event = peer.start_mining(event.timestamp, hashing_power, self.I)
         self.event_queue.add_event(end_mining_event)
+
+    def process_receive_hash(self, event: Event):
+        receiver = self.peers[event.receiver]
+        hash = event.data
+        events = receiver.receive_hash(hash, event.sender, event.timestamp)
+        for event_ in events:
+            self.event_queue.add_event(event_)
 
     def process_receive_block(self, event: Event):
         receiver = self.peers[event.receiver]
@@ -556,33 +633,51 @@ class P2PNetwork:
         hashing_power = self.low_hashing_power if receiver.is_low_cpu else self.high_hashing_power
 
         return_code = receiver.receive_block(block, event.timestamp, sender_id)
-        if return_code != -1:
-            self.forward_packet(receiver, block.hash, event.timestamp, event.sender)
+
+        if return_code != -1: ## unseen block
+            self.forward_packet(receiver, block.hash, event.timestamp, event.sender, receiver.malicious)
+            if not (event.overlay and block.get_miner_id() == self.ringleader):
+                self.forward_packet(receiver, block.hash, event.timestamp, event.sender, False)
+
         if return_code == 1:
             ## new longest chain formed, re-start mining on the same
             event = receiver.start_mining(event.timestamp, hashing_power, self.I)
             self.event_queue.add_event(event)
+
+        if return_code == 2:
+            assert receiver.ringleader
+            ## dump private chain, do not re-start mining
+            self.forward_packet(receiver, f"{receiver.release_counter + 1}", event.timestamp, self.ringleader, True)
+            event = Event(event.timestamp, EventType.RELEASE_PRIVATE_CHAIN, f"{receiver.release_counter + 1}", self.ringleader, self.ringleader, True)
+            self.event_queue.add_event(event)
+            
+
+    ## honest peer - sends out hash to everyone else on normal network
+    ## malicious peer - 
+    ##                - receives on normal network - forward hash to malicious on overlay send hash to honest on normal
+    ##                - receives on overlay - if its a malicious block, forward hash on overlay
+    ##                                      - if its a honest block, forward hash to malicious on overlay, send hash to honest on normal
     
-    def process_receive_hash(self, event: Event):
-        receiver = self.peers[event.receiver]
-        hash = event.data
-        events = receiver.receive_hash(hash, event.sender, event.timestamp)
-        for event_ in events:
-            self.event_queue.add_event(event_)
 
     def process_send_request(self, event: Event):
         requester = self.peers[event.sender]
         provider = event.receiver
-        self.forward_packet_single(requester, event.data, event.timestamp, provider, EventType.RECEIVE_REQUEST)
+        ## event.overlay == requester and provider in self.malicious_neighbours
+        self.forward_packet_single(requester, event.data, event.timestamp, provider, EventType.RECEIVE_REQUEST, event.overlay)
         
 
     def process_receive_request(self, event: Event):
         ## The event's receiver is going to process the request
         provider = self.peers[event.receiver]
         hash = event.data
+        if provider.malicious and not event.overlay:
+            if provider.blocks_seen[hash].miner_id == self.ringleader: ## honest neighbour asking for malicious block
+                self.forward_packet_single(provider, provider.blocks_seen[hash], event.timestamp, event.sender, EventType.RECEIVE_BLOCK, False)
+            else: ## honest neighbour asking for honest block
+                return
         block = provider.receive_request(hash)
         if block:
-            self.forward_packet_single(provider, block, event.timestamp, event.sender, EventType.RECEIVE_BLOCK)
+            self.forward_packet_single(provider, block, event.timestamp, event.sender, EventType.RECEIVE_BLOCK, event.overlay)
     
     def process_timeout(self, event: Event):
         requester = self.peers[event.sender]
@@ -591,7 +686,20 @@ class P2PNetwork:
         for event_ in events:
             self.event_queue.add_event(event_)
 
-            
+    def process_release(self, event: Event):
+        receiver = self.peers[event.receiver]
+        assert receiver.malicious
+        if int(event.data) <= receiver.release_counter:
+            return
+        receiver.release_counter = int(event.data)
+
+        ## RELEASE THE CHAIN - FORWARD HASHES IN HONEST NETWORK
+        private_chain = receiver.blockchain_tree.get_private_chain()
+        for block in private_chain:
+            self.forward_packet(receiver, block.hash, event.timestamp, receiver.peer_id, False)
+
+        self.forward_packet(event.receiver, event.data, event.timestamp, event.sender, True)
+
     def write_balances(self, file_name: str):
         for peer in self.peers:
             balance_map = peer.blockchain_tree.longest_chain_leaf.balance_map

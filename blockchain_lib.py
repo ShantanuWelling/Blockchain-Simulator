@@ -12,6 +12,7 @@ class EventType(Enum):
     SEND_REQUEST = auto()
     RECEIVE_REQUEST = auto()
     TIMEOUT = auto()
+    RELEASE_PRIVATE_CHAIN = auto()
     
 COINBASE_REWARD = 50  # 50 coins
 
@@ -91,6 +92,9 @@ class Block:
         self.create_timestamp = timestamp
         self.parent_block_id = parent_block_id
         self.hash = hash(str(self.block_id) + str(self.create_timestamp) + str(self.parent_block_id))
+
+    def get_miner_id(self):
+        return self.transactions[0].receiver
 
 class BlockChainNode:
     ## Wrapper class around a block with information required to maintain the tree for each peer
@@ -223,5 +227,71 @@ class BlockchainTree:
         return number_of_blocks
              
             
+class MaliciousBlockchainTree(BlockchainTree):
+    def __init__(self, ringleader_id):
+        super().__init__()
+        self.private_chain_root = self.root
+        self.ringleader_id = ringleader_id
     
+    def add(self, block: Block, timestamp) -> bool:
+        ## Adds a new block to the tree, or to the buffer if the parent is not a part of it yet
+        self.buffer.append(block)
+        prev_buffer_len = -1
+        release_private_chain = False
+
+        while len(self.buffer) != prev_buffer_len:
+            prev_buffer_len = len(self.buffer)
+            for block in self.buffer:
+                if block.parent_block_id not in self.nodes:
+                    continue
+
+                parent_node = self.nodes[block.parent_block_id]
+                ## check that the block was created after the parent block
+                if block.create_timestamp < parent_node.block.create_timestamp:
+                    self.buffer.remove(block)
+                    print("b2")
+                    continue
+                ## check that the transactions in the block are consistent with the chain it is being added to
+                valid_block = validate(block.transactions, parent_node.balance_map)
+                if not valid_block:
+                    self.buffer.remove(block)
+                    print("b3")
+                    continue
+                ## check that the block contains no transaction already a part of the chain
+                chain_transactions = self.chain_transactions(parent_node)
+                if chain_transactions.intersection(set(block.transactions)):
+                    self.buffer.remove(block)
+                    print("b4")
+                    continue
+
+                new_node = BlockChainNode(block, parent_node, timestamp)
+                self.nodes[block.block_id] = new_node
+                parent_node.children.append(new_node)
+                self.buffer.remove(block)
+
+                if new_node.height == self.height - 1 or (new_node.parent == self.longest_chain_leaf.parent):
+                    release_private_chain = True
+
+                ## switch the longest chain leaf to the new_node
+                ## make it the private chain root if honest block
+                if new_node.height > self.height:
+                    if new_node.miner_id != self.ringleader_id:
+                        self.private_chain_root = new_node
+                    release_private_chain = False
+                    self.longest_chain_txs = self.chain_transactions(new_node)
+                    self.height = new_node.height
+                    self.longest_chain_leaf = new_node
+
+        return release_private_chain
+    
+    def release_private_chain(self) -> list[Block]:
+        curr_node = self.longest_chain_leaf
+        private_chain = []
+        while curr_node != self.private_chain_root:
+            assert curr_node.miner_id == self.ringleader_id
+            private_chain.append(curr_node.block)
+            curr_node = curr_node.parent
+        return private_chain
+
+
 
