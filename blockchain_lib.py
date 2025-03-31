@@ -192,19 +192,19 @@ class BlockchainTree:
                 ## check that the block was created after the parent block
                 if block.create_timestamp < parent_node.block.create_timestamp:
                     self.buffer.remove(block)
-                    print("b2")
+                    # print("b2")
                     continue
                 ## check that the transactions in the block are consistent with the chain it is being added to
                 valid_block = validate(block.transactions, parent_node.balance_map)
                 if not valid_block:
                     self.buffer.remove(block)
-                    print("b3")
+                    # print("b3")
                     continue
                 ## check that the block contains no transaction already a part of the chain
                 chain_transactions = self.chain_transactions(parent_node)
                 if chain_transactions.intersection(set(block.transactions)):
                     self.buffer.remove(block)
-                    print("b4")
+                    # print("b4")
                     continue
 
                 new_node = BlockChainNode(block, parent_node, timestamp)
@@ -256,19 +256,19 @@ class MaliciousBlockchainTree(BlockchainTree):
                 ## check that the block was created after the parent block
                 if block.create_timestamp < parent_node.block.create_timestamp:
                     self.buffer.remove(block)
-                    print("b2")
+                    # print("b2")
                     continue
                 ## check that the transactions in the block are consistent with the chain it is being added to
                 valid_block = validate(block.transactions, parent_node.balance_map)
                 if not valid_block:
                     self.buffer.remove(block)
-                    print("b3")
+                    # print("b3")
                     continue
                 ## check that the block contains no transaction already a part of the chain
                 chain_transactions = self.chain_transactions(parent_node)
                 if chain_transactions.intersection(set(block.transactions)):
                     self.buffer.remove(block)
-                    print("b4")
+                    # print("b4")
                     continue
 
                 new_node = BlockChainNode(block, parent_node, timestamp)
@@ -296,6 +296,7 @@ class MaliciousBlockchainTree(BlockchainTree):
         return release_private_chain
     
     def get_private_chain(self) -> List[Block]:
+        # get list of blocks in pvt chain to be released
         curr_node = self.longest_chain_leaf
         private_chain = []
         while curr_node != self.private_chain_root:
