@@ -284,7 +284,7 @@ class MaliciousBlockchainTree(BlockchainTree):
 
         return release_private_chain
     
-    def release_private_chain(self) -> list[Block]:
+    def get_private_chain(self) -> List[Block]:
         curr_node = self.longest_chain_leaf
         private_chain = []
         while curr_node != self.private_chain_root:

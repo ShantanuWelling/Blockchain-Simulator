@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 TX_SIZE = 1/1000  # 1 KB (in MB)
 COINBASE_REWARD = 50  # 50 coins
 random.seed(42)
-
+DEBUG = 1
 
 class Peer:
     def __init__(self, peer_id: int, balance: int, is_slow: bool, is_low_cpu: bool, interarrival_time: float, timeout: int):
@@ -378,6 +378,7 @@ class P2PNetwork:
         ringleader = random.choice(list(self.malicious_peers.values()))
         ringleader.ringleader = True
         self.ringleader = ringleader.peer_id
+        print(f"Ringleader is {ringleader.peer_id}")
         for peer in self.malicious_peers.values():
             peer.malicious_nodes = list(self.malicious_peers.values())
             peer.ringleader_id = ringleader.peer_id
@@ -563,6 +564,8 @@ class P2PNetwork:
                 elif event.event_type == EventType.TIMEOUT:
                     self.process_timeout(event)
                 elif event.event_type == EventType.RELEASE_PRIVATE_CHAIN:
+                    if DEBUG:
+                        print("releasing chain")
                     self.process_release(event)
                 continue
                 if all(peer.blockchain_tree.longest_chain_leaf.height >= stopping_height for peer in self.peers):
@@ -607,6 +610,8 @@ class P2PNetwork:
         if peer.malicious:
             assert peer.ringleader
             hashing_power = self.malicious_hashing_power
+            if DEBUG:
+                print(f"Ringleader mined block {block.block_id}")
         else:
             hashing_power = self.low_hashing_power if peer.is_low_cpu else self.high_hashing_power
         if block.block_id != peer.block_being_mined.block_id:
@@ -694,11 +699,14 @@ class P2PNetwork:
         receiver.release_counter = int(event.data)
 
         ## RELEASE THE CHAIN - FORWARD HASHES IN HONEST NETWORK
-        private_chain = receiver.blockchain_tree.get_private_chain()
+        private_chain : List[Block] = receiver.blockchain_tree.get_private_chain()
+        if DEBUG:
+            print(f"Length of pvt chain {len(private_chain)}")
+        
         for block in private_chain:
             self.forward_packet(receiver, block.hash, event.timestamp, receiver.peer_id, False)
 
-        self.forward_packet(event.receiver, event.data, event.timestamp, event.sender, True)
+        self.forward_packet(receiver, event.data, event.timestamp, event.sender, True)
 
     def write_balances(self, file_name: str):
         for peer in self.peers:
