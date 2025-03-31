@@ -345,7 +345,7 @@ class P2PNetwork:
         self.create_peers()
         self.connect_peers()
         self.connect_malicious_peers()
-        self.print_network()
+        # self.print_network()
         self.initialize_latencies()
         self.initialize_malicious_latencies()
         self.initialize_event_queue()
@@ -597,8 +597,8 @@ class P2PNetwork:
                     self.write_balances(f"{output_dir}/balances.txt")
                     self.write_ratios(f"{output_dir}/ratios.txt")
                     for peer in self.peers:
-                        peer.write_to_file(f"{output_dir}/tree_peer_{peer.peer_id}.txt")
                         if not suppress_output:
+                            peer.write_to_file(f"{output_dir}/tree_peer_{peer.peer_id}.txt")
                             peer.visualize_tree(output_dir = output_dir, ringleader_id = self.ringleader)
                     print(f"Simulation time {event.timestamp} exceeded stopping time {stopping_time}. Exiting simulation...")
                     self.continue_simulation = False
@@ -744,7 +744,7 @@ class P2PNetwork:
             if provider.blocks_seen[hash].get_miner_id() == self.ringleader: ## honest neighbour asking for malicious block
                 self.forward_packet_single(provider, provider.blocks_seen[hash], event.timestamp, event.sender, EventType.RECEIVE_BLOCK, False)
             else: ## honest neighbour asking for honest block
-                return
+                # return
                 ## to remove eclipse attack
                 self.forward_packet_single(provider, provider.blocks_seen[hash], event.timestamp, event.sender, EventType.RECEIVE_BLOCK, False)
                 return
@@ -839,27 +839,27 @@ class P2PNetwork:
             with open(file_name, 'a') as file:
                 file.write(peer_data + "\n")
 
-        def write_metrics(self, output_dir: str):
-            ringleader = self.peers[self.ringleader]
-            red_total_blocks = ringleader.blocks_mined
-            longest_chain = ringleader.blockchain_tree.longest_chain_leaf
+    def write_metrics(self, output_dir: str):
+        ringleader = self.peers[self.ringleader]
+        red_total_blocks = ringleader.blocks_mined
+        longest_chain = ringleader.blockchain_tree.longest_chain_leaf
 
-            ## traverse the longest chain till genesis block
-            chain = []
-            curr_node = longest_chain
-            while curr_node:
-                chain.append(curr_node)
-                curr_node = curr_node.parent
-            
-            len_longest_chain = len(chain)
-            red_blocks_in_longest_chain = sum([1 for node in chain if node.miner_id == self.ringleader])
+        ## traverse the longest chain till genesis block
+        chain = []
+        curr_node = longest_chain
+        while curr_node:
+            chain.append(curr_node)
+            curr_node = curr_node.parent
+        
+        len_longest_chain = len(chain)
+        red_blocks_in_longest_chain = sum([1 for node in chain if node.miner_id == self.ringleader])
 
-            with open(f"{output_dir}/metrics.txt", 'w') as file:
-                file.write(f"Total blocks mined by ringleader: {red_total_blocks}\n")
-                file.write(f"Total blocks in longest chain: {len_longest_chain}\n")
-                file.write(f"Total red blocks in longest chain: {red_blocks_in_longest_chain}\n")
-                file.write(f"Red blocks in longest chain by longest chain length: {red_blocks_in_longest_chain / len_longest_chain}\n")
-                file.write(f"Red blocks in longest chain by total red blocks: {red_blocks_in_longest_chain / red_total_blocks}\n")
+        with open(f"{output_dir}/metrics.txt", 'w') as file:
+            file.write(f"Total blocks mined by ringleader: {red_total_blocks}\n")
+            file.write(f"Total blocks in longest chain: {len_longest_chain}\n")
+            file.write(f"Total red blocks in longest chain: {red_blocks_in_longest_chain}\n")
+            file.write(f"Red blocks in longest chain by longest chain length: {red_blocks_in_longest_chain / len_longest_chain}\n")
+            file.write(f"Red blocks in longest chain by total red blocks: {red_blocks_in_longest_chain / red_total_blocks}\n")
 
                 
     
@@ -890,11 +890,11 @@ if __name__ == "__main__":
     frac_malicious = args.frac_malicious
     timeout = args.timeout
     I = args.I
-    output_dir = f"results_{num_peers}_{int(100*frac_slow)}_{int(100*frac_low_cpu)}_{int(interarrival_time)}_{int(I)}"
+    output_dir = f"non_eclipse/results_{frac_malicious}_{timeout}"
     os.makedirs(output_dir, exist_ok = True)
     network = P2PNetwork(num_peers, frac_slow, frac_low_cpu, interarrival_time, I, frac_malicious, timeout)
 
     network.process_events(output_dir = output_dir, stopping_height = stopping_height, suppress_output = suppress_output, stopping_time = stopping_time)
 
-    network.write_ratios(output_dir)
+    network.write_metrics(output_dir)
 

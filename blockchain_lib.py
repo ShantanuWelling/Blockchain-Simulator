@@ -297,6 +297,8 @@ class MaliciousBlockchainTree(BlockchainTree):
     
     def get_private_chain(self) -> List[Block]:
         # get list of blocks in pvt chain to be released
+        if self.longest_chain_leaf.miner_id != self.ringleader_id:
+            return []
         curr_node = self.longest_chain_leaf
         private_chain = []
         while curr_node != self.private_chain_root:
